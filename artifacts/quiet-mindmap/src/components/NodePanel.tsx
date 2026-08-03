@@ -6,6 +6,9 @@ import { KIND_META } from '../types';
 interface Props {
   node: MindNode | null;
   mode: 'add' | 'edit' | null;
+  /** Title of the parent when adding a sub-item, otherwise null. */
+  parentTitle: string | null;
+  hasChildren: boolean;
   onClose: () => void;
   onAdd: (data: { title: string; detail: string; kind: NodeKind; owner: string }) => void;
   onUpdate: (id: string, changes: Partial<MindNode>) => void;
@@ -15,7 +18,7 @@ interface Props {
 
 const KINDS: NodeKind[] = ['urgent', 'concern', 'idea', 'task'];
 
-export function NodePanel({ node, mode, onClose, onAdd, onUpdate, onDelete, onStatusChange }: Props) {
+export function NodePanel({ node, mode, parentTitle, hasChildren, onClose, onAdd, onUpdate, onDelete, onStatusChange }: Props) {
   const [title, setTitle] = useState('');
   const [detail, setDetail] = useState('');
   const [kind, setKind] = useState<NodeKind>('task');
@@ -98,9 +101,16 @@ export function NodePanel({ node, mode, onClose, onAdd, onUpdate, onDelete, onSt
                 alignItems: 'center',
                 justifyContent: 'space-between',
               }}>
-                <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'hsl(220,20%,92%)', letterSpacing: '-0.02em' }}>
-                  {mode === 'add' ? 'Add to your map' : 'Edit entry'}
-                </h2>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'hsl(220,20%,92%)', letterSpacing: '-0.02em' }}>
+                    {mode === 'add' ? (parentTitle ? 'Add a sub-item' : 'Add to your map') : 'Edit entry'}
+                  </h2>
+                  {mode === 'add' && parentTitle && (
+                    <p style={{ margin: '4px 0 0', fontSize: 12, color: 'hsl(220,15%,48%)', fontWeight: 500 }}>
+                      Under <span style={{ color: 'hsl(262,60%,68%)' }}>{parentTitle}</span>
+                    </p>
+                  )}
+                </div>
                 <button type="button" onClick={onClose} style={{
                   background: 'none',
                   border: 'none',
@@ -330,13 +340,20 @@ export function NodePanel({ node, mode, onClose, onAdd, onUpdate, onDelete, onSt
 
                 {mode === 'edit' && node && (
                   confirmDelete ? (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button type="button" onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '9px', borderRadius: '8px', border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,55%)', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}>
-                        Keep it
-                      </button>
-                      <button type="button" onClick={() => { onDelete(node.id); onClose(); }} style={{ flex: 1, padding: '9px', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.12)', color: 'hsl(0,80%,70%)', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}>
-                        Remove
-                      </button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {hasChildren && (
+                        <p style={{ margin: 0, fontSize: 12, color: 'hsl(220,15%,48%)', lineHeight: 1.5, textAlign: 'center' }}>
+                          Its sub-items will stay on the map and move up a level.
+                        </p>
+                      )}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" onClick={() => setConfirmDelete(false)} style={{ flex: 1, padding: '9px', borderRadius: '8px', border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,55%)', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}>
+                          Keep it
+                        </button>
+                        <button type="button" onClick={() => { onDelete(node.id); onClose(); }} style={{ flex: 1, padding: '9px', borderRadius: '8px', border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.12)', color: 'hsl(0,80%,70%)', fontSize: '13px', cursor: 'pointer', fontWeight: 600 }}>
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <button type="button" onClick={() => setConfirmDelete(true)} style={{ padding: '9px', borderRadius: '8px', border: '1px solid transparent', background: 'transparent', color: 'hsl(220,15%,38%)', fontSize: '13px', cursor: 'pointer', fontWeight: 500, textAlign: 'center', transition: 'color 0.15s' }}

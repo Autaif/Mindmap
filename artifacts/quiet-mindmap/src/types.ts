@@ -8,13 +8,27 @@ export interface MindNode {
   kind: NodeKind;
   owner: string;
   status: NodeStatus;
+  parentId: string | null;
   createdAt: string;
   updatedAt: string;
+  /** World-space coordinates. The focus orb sits at world origin (0, 0). */
   x: number;
   y: number;
 }
 
-export const KIND_META: Record<NodeKind, { label: string; color: string; glow: string; border: string; bg: string }> = {
+export interface Viewport {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+export const MIN_SCALE = 0.3;
+export const MAX_SCALE = 2.5;
+
+export const KIND_META: Record<
+  NodeKind,
+  { label: string; color: string; glow: string; border: string; bg: string }
+> = {
   urgent: {
     label: 'Urgent',
     color: '#f97316',
@@ -44,3 +58,7 @@ export const KIND_META: Record<NodeKind, { label: string; color: string; glow: s
     bg: 'rgba(96,165,250,0.1)',
   },
 };
+
+export function clampScale(scale: number) {
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+}
