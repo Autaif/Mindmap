@@ -1,36 +1,50 @@
-# [Project name]
+# Quiet Mindmap
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A private, space-inspired mindmap for directors and managers to capture, classify, explore, complete, and remove workplace concerns and tasks without exposing sensitive notes to a secretary or shared inbox. Everything stays on the device (localStorage).
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/quiet-mindmap run dev` — run the mindmap frontend (port assigned by workflow)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env: `DATABASE_URL` — Postgres connection string, `SESSION_SECRET` — session signing
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
+- Frontend: React + Vite, Tailwind CSS v4, Framer Motion, Wouter
 - API: Express 5
-- DB: PostgreSQL + Drizzle ORM
+- DB: PostgreSQL + Drizzle ORM (not yet wired to frontend — localStorage only for now)
 - Validation: Zod (`zod/v4`), `drizzle-zod`
 - API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/quiet-mindmap/src/pages/MindmapPage.tsx` — main page (canvas, filters, detail card)
+- `artifacts/quiet-mindmap/src/components/` — NodeBubble, NodePanel, FilterBar, StarField
+- `artifacts/quiet-mindmap/src/hooks/useNodes.ts` — localStorage persistence + seed data
+- `artifacts/quiet-mindmap/src/types.ts` — MindNode type, NodeKind, KIND_META color config
+- `lib/api-spec/openapi.yaml` — OpenAPI source of truth
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Local-first (localStorage) for v1 — keeps the app private without requiring auth or a backend
+- No backend routes for node data yet — the API server exists but is not connected to the mindmap
+- Seed nodes are generated at first load using canvas dimensions for radial positioning; clearing them sets a localStorage flag to prevent re-seeding
+- Dragging is handled via pointer events on each node without a library to avoid dependency overhead
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Space-themed dark canvas with nodes orbiting a central hub
+- Four node kinds: Urgent (orange), Concern (purple), Idea (green), Task (blue)
+- Three statuses: open, handled, archived
+- Filter bar: search, kind filter, status filter
+- Click a node to see its detail card with quick-action buttons
+- Add/edit via slide-in panel
+- Privacy badge confirms data stays on device
 
 ## User preferences
 
@@ -38,7 +52,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Seed nodes are placed using canvas dimensions; if canvasWidth/canvasHeight is 0 at mount time, seeding is deferred until the ResizeObserver fires
+- Do not run `pnpm dev` at workspace root — use the workflow tools or `pnpm --filter` targeting a specific artifact
 
 ## Pointers
 
