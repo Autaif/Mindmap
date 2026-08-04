@@ -156,10 +156,18 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
   const userId = user?.id ?? null;
   /** Signed out: keep everything in this browser, talk to no server. */
   const isGuest = isLoaded && !userId;
-  const storeId = userId ?? GUEST_STORE_ID;
+  /**
+   * `null` until Clerk resolves. A signed-in user starts with `user === null`,
+   * so committing to a store before that would write their entries into the
+   * guest bucket.
+   */
+  const storeId = isLoaded ? (userId ?? GUEST_STORE_ID) : null;
 
   const [nodes, setNodesState] = useState<MindNode[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
+  const [readyStore, setReadyStore] = useState<string | null>(null);
+  /** True once this store's entries are loaded; mutations are unsafe before. */
+  const ready = storeId !== null && readyStore === storeId;
 
   const nodesRef = useRef<MindNode[]>([]);
   const pendingRef = useRef<Pending>({ upserts: [], deletes: [] });
@@ -167,9 +175,26 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
   const flushing = useRef(false);
   const initializedFor = useRef<string | null>(null);
   const dirtyPositions = useRef<Set<string>>(new Set());
+  /** Bumped whenever identity changes, so in-flight work can disown itself. */
+  const epoch = useRef(0);
+
+  // Signing in or out swaps the whole store. Abandon anything mid-flight
+  // rather than letting it land on the new identity's data.
+  useEffect(() => {
+    epoch.current += 1;
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    flushing.current = false;
+    pendingRef.current = { upserts: [], deletes: [] };
+    dirtyPositions.current.clear();
+    setReadyStore(null);
+  }, [storeId]);
 
   const setNodes = useCallback(
     (updater: (prev: MindNode[]) => MindNode[]) => {
+      if (!storeId) return;
       setNodesState((prev) => {
         const next = updater(prev);
         nodesRef.current = next;
@@ -181,13 +206,14 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
   );
 
   const savePending = useCallback(() => {
+    if (!storeId) return;
     localStorage.setItem(pendingKey(storeId), JSON.stringify(pendingRef.current));
   }, [storeId]);
 
   const enqueue = useCallback(
     (kind: 'upserts' | 'deletes', id: string) => {
       // Nothing to upload when signed out — don't accumulate a phantom queue.
-      if (isGuest) return;
+      if (!storeId || isGuest) return;
       const p = pendingRef.current;
       if (kind === 'upserts') {
         p.deletes = p.deletes.filter((d) => d !== id);
@@ -198,7 +224,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       }
       savePending();
     },
-    [isGuest, savePending],
+    [storeId, isGuest, savePending],
   );
 
   const flush = useCallback(async () => {

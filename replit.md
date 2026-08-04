@@ -1,4 +1,9 @@
-# Quiet Mindmap
+# AZM Mindmap
+
+> Product name is **AZM Mindmap**. Internal identifiers deliberately keep the old
+> `quiet-mindmap` spelling — package names, directory names, artifact ids, and
+> localStorage keys. Renaming those would orphan every user's saved entries and
+> break the workspace filters for no user-visible gain.
 
 A private, space-inspired mindmap for directors and managers to capture, classify, explore, complete, and remove workplace concerns and tasks without exposing sensitive notes to a secretary or shared inbox. Entries are stored per-user in PostgreSQL behind the API server (Clerk auth), with an offline-first localStorage cache that syncs when the connection returns.
 

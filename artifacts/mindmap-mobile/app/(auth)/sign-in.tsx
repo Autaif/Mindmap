@@ -102,7 +102,7 @@ export default function SignInScreen() {
       >
         <View style={styles.header}>
           <View style={[styles.orb, { backgroundColor: colors.primary }]} />
-          <Text style={[styles.title, { color: colors.foreground }]}>Quiet Mindmap</Text>
+          <Text style={[styles.title, { color: colors.foreground }]}>AZM Mindmap</Text>
           <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
             Sign in to see your synced map
           </Text>

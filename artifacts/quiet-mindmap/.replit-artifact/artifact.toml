@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Quiet Mindmap"
+title = "AZM Mindmap"
 description = "A private, space-inspired mindmap for directors and managers to capture, classify, explore, complete, and remove workplace concerns and tasks without exposing sensitive notes to a secretary or shared inbox."
 version = "1.0.0"
 id = "artifacts/quiet-mindmap"
