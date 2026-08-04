@@ -1,6 +1,6 @@
 # Quiet Mindmap
 
-A private, space-inspired mindmap for directors and managers to capture, classify, explore, complete, and remove workplace concerns and tasks without exposing sensitive notes to a secretary or shared inbox. Everything stays on the device (localStorage).
+A private, space-inspired mindmap for directors and managers to capture, classify, explore, complete, and remove workplace concerns and tasks without exposing sensitive notes to a secretary or shared inbox. Entries are stored per-user in PostgreSQL behind the API server (Clerk auth), with an offline-first localStorage cache that syncs when the connection returns.
 
 ## Run & Operate
 
@@ -37,8 +37,10 @@ A private, space-inspired mindmap for directors and managers to capture, classif
 
 ## Architecture decisions
 
-- Local-first (localStorage) for v1 — keeps the app private without requiring auth or a backend
-- No backend routes for node data yet — the API server exists but is not connected to the mindmap
+- **Auth**: Replit-managed Clerk (web routes `/sign-in/*?`, `/sign-up/*?`; landing at `/` for signed-out users, map at `/map`). API routes are protected by `requireAuth` (Clerk session) and every query is scoped to the Clerk `userId`.
+- **Sync architecture (offline-first)**: `useNodes` keeps a per-user localStorage cache (`quiet-mindmap-nodes:<userId>`) plus a pending-op queue (`quiet-mindmap-pending:<userId>`). Mutations apply locally first, enqueue upsert/delete ids, and a debounced flush POSTs `/api/nodes/sync` (batch upserts + deletes → merged list). Conflict resolution is last-write-wins by client `updatedAt`, enforced both server-side (`onConflictDoUpdate` with `setWhere updatedAt <=`) and in the client merge. The `online` event triggers a flush.
+- **Legacy migration**: pre-account entries in the old `quiet-mindmap-nodes` localStorage key are adopted and uploaded on first login on that browser, then the legacy key is removed.
+- Node `id` and timestamps are client-generated so offline-created entries keep a stable identity across devices.
 - **World coordinates**: node `x`/`y` are world-space, with the focus orb at origin (0, 0). A single transformed container applies `translate(view.x, view.y) scale(view.scale)`, so nodes and their SVG connection lines share one coordinate space and cannot drift apart. Screen→world is `(clientCoord - canvasRectOrigin - view.offset) / view.scale`.
 - Nodes saved before world coordinates existed (no `parentId` field) are migrated once on load by subtracting the canvas centre from `x`/`y`
 - Sub-items are modelled as `parentId` on the node, not a nested tree — flat storage keeps filtering and search trivial. A child's line anchors to its nearest *visible* ancestor, falling back to the focus orb, so filtering never leaves a line dangling.

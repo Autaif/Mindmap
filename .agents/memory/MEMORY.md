@@ -1,0 +1,1 @@
+- [OpenAPI codegen quirks](openapi-codegen-quirks.md) — never use `type: integer` in the spec; Orval emits zod-4-only `z.int()` and libs typecheck breaks.

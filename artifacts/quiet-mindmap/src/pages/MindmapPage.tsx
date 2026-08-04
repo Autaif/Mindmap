@@ -5,13 +5,21 @@ import { NodeBubble } from '../components/NodeBubble';
 import { NodePanel } from '../components/NodePanel';
 import { FilterBar } from '../components/FilterBar';
 import { ZoomControls } from '../components/ZoomControls';
-import { useNodes } from '../hooks/useNodes';
+import { useClerk } from '@clerk/react';
+import { useNodes, type SyncStatus } from '../hooks/useNodes';
 import type { MindNode, NodeKind, NodeStatus, Viewport } from '../types';
 import { KIND_META, clampScale } from '../types';
 
 const DISMISS_KEY = 'quiet-mindmap-seed-notice-dismissed';
 
-function PrivacyBadge() {
+const SYNC_LABEL: Record<SyncStatus, string> = {
+  synced: 'Private to your account · synced',
+  syncing: 'Private to your account · syncing…',
+  offline: 'Offline — changes saved, will sync when back online',
+  error: 'Sync paused — retrying',
+};
+
+function PrivacyBadge({ status }: { status: SyncStatus }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -43,8 +51,35 @@ function PrivacyBadge() {
         <rect x="1.5" y="4.5" width="8" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
         <path d="M3.5 4.5V3a2 2 0 114 0v1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       </svg>
-      Stays on this device only
+      {SYNC_LABEL[status]}
     </motion.div>
+  );
+}
+
+function SignOutButton() {
+  const { signOut } = useClerk();
+  return (
+    <button
+      type="button"
+      onClick={() => signOut({ redirectUrl: import.meta.env.BASE_URL || '/' })}
+      style={{
+        position: 'fixed',
+        top: 18,
+        right: 18,
+        zIndex: 70,
+        padding: '6px 13px',
+        borderRadius: 9,
+        border: '1px solid hsl(228,25%,20%)',
+        background: 'rgba(13,15,33,0.75)',
+        color: 'hsl(220,15%,55%)',
+        fontSize: 12,
+        fontWeight: 600,
+        cursor: 'pointer',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      Sign out
+    </button>
   );
 }
 
@@ -369,7 +404,7 @@ export function MindmapPage() {
     return () => ro.disconnect();
   }, []);
 
-  const { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes } = useNodes(
+  const { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes, syncStatus } = useNodes(
     dimensions.w,
     dimensions.h,
   );
@@ -793,7 +828,8 @@ export function MindmapPage() {
         onReset={fitView}
       />
 
-      <PrivacyBadge />
+      <PrivacyBadge status={syncStatus} />
+      <SignOutButton />
     </div>
   );
 }

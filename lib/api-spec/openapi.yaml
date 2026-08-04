@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: nodes
+    description: Mindmap node operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      summary: List all mindmap nodes for the signed-in user
+      responses:
+        "200":
+          description: The user's nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MindNode"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
+  /nodes/sync:
+    post:
+      operationId: syncNodes
+      tags: [nodes]
+      summary: Apply a batch of offline changes and return the merged node list
+      description: >
+        Upserts use last-write-wins by updatedAt, so stale offline edits never
+        overwrite newer changes made on another device. Deletes are applied by id.
+        Responds with the full post-merge node list for the user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NodesSyncInput"
+      responses:
+        "200":
+          description: Full merged node list after applying the batch
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MindNode"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorMessage"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +85,50 @@ components:
           type: string
       required:
         - status
-
+    ApiErrorMessage:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+    MindNode:
+      type: object
+      required: [id, title, detail, kind, owner, status, parentId, createdAt, updatedAt, x, y]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        detail:
+          type: string
+        kind:
+          type: string
+          enum: [concern, idea, urgent, task]
+        owner:
+          type: string
+        status:
+          type: string
+          enum: [open, handled, archived]
+        parentId:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+        x:
+          type: number
+        y:
+          type: number
+    NodesSyncInput:
+      type: object
+      required: [upserts, deletes]
+      properties:
+        upserts:
+          type: array
+          items:
+            $ref: "#/components/schemas/MindNode"
+        deletes:
+          type: array
+          items:
+            type: string

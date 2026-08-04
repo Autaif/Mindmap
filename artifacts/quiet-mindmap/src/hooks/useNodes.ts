@@ -1,8 +1,22 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useUser } from '@clerk/react';
+import { listNodes, syncNodes } from '@workspace/api-client-react';
+import type { MindNode as ApiMindNode } from '@workspace/api-client-react';
 import type { MindNode, NodeKind } from '../types';
 
-const STORAGE_KEY = 'quiet-mindmap-nodes';
-const SEEDED_KEY = 'quiet-mindmap-seeded';
+const LEGACY_STORAGE_KEY = 'quiet-mindmap-nodes';
+const LEGACY_SEEDED_KEY = 'quiet-mindmap-seeded';
+
+const nodesKey = (userId: string) => `quiet-mindmap-nodes:${userId}`;
+const pendingKey = (userId: string) => `quiet-mindmap-pending:${userId}`;
+const seededKey = (userId: string) => `quiet-mindmap-seeded:${userId}`;
+
+export type SyncStatus = 'syncing' | 'synced' | 'offline' | 'error';
+
+interface Pending {
+  upserts: string[];
+  deletes: string[];
+}
 
 function generateId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -77,7 +91,6 @@ function createSeedNodes(): MindNode[] {
     out.push({ ...rest, id: parentId, parentId: null, createdAt: now, updatedAt: now, ...pos });
 
     (children ?? []).forEach((child, ci) => {
-      // Push the child further out along the same direction as its parent.
       const len = Math.hypot(pos.x, pos.y) || 1;
       const ux = pos.x / len;
       const uy = pos.y / len;
@@ -97,75 +110,230 @@ function createSeedNodes(): MindNode[] {
   return out;
 }
 
-function loadStored(): MindNode[] {
+function readJson<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed as MindNode[];
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
   } catch {
-    return [];
+    return fallback;
   }
 }
 
+function loadStoredNodes(key: string): MindNode[] {
+  const parsed = readJson<unknown>(key, []);
+  return Array.isArray(parsed) ? (parsed as MindNode[]) : [];
+}
+
+/** Last-write-wins merge of server nodes with locally-pending edits. */
+function mergeServer(server: MindNode[], local: MindNode[], pending: Pending): MindNode[] {
+  const pendingUpserts = new Set(pending.upserts);
+  const pendingDeletes = new Set(pending.deletes);
+  const byId = new Map<string, MindNode>();
+
+  for (const s of server) {
+    if (pendingDeletes.has(s.id)) continue;
+    byId.set(s.id, s);
+  }
+  for (const l of local) {
+    if (pendingDeletes.has(l.id)) continue;
+    const s = byId.get(l.id);
+    if (!s) {
+      // Keep local-only nodes only if they still await upload; otherwise the
+      // server (another device) deleted them.
+      if (pendingUpserts.has(l.id)) byId.set(l.id, l);
+      continue;
+    }
+    if (pendingUpserts.has(l.id) && l.updatedAt >= s.updatedAt) byId.set(l.id, l);
+  }
+  return [...byId.values()];
+}
+
 export function useNodes(canvasWidth: number, canvasHeight: number) {
-  const [nodes, setNodes] = useState<MindNode[]>(() => loadStored());
-  const initialized = useRef(false);
+  const { user } = useUser();
+  const userId = user?.id ?? null;
 
-  // One-time setup once the canvas has real dimensions: seed a fresh map, or
-  // migrate legacy entries that stored screen coordinates and had no parent.
-  useEffect(() => {
-    if (initialized.current) return;
-    if (canvasWidth === 0 || canvasHeight === 0) return;
-    initialized.current = true;
+  const [nodes, setNodesState] = useState<MindNode[]>([]);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
 
-    const stored = loadStored();
+  const nodesRef = useRef<MindNode[]>([]);
+  const pendingRef = useRef<Pending>({ upserts: [], deletes: [] });
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushing = useRef(false);
+  const initializedFor = useRef<string | null>(null);
+  const dirtyPositions = useRef<Set<string>>(new Set());
 
-    if (stored.length === 0) {
-      if (!localStorage.getItem(SEEDED_KEY)) {
-        const seeded = createSeedNodes();
-        setNodes(seeded);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-        localStorage.setItem(SEEDED_KEY, '1');
+  const setNodes = useCallback(
+    (updater: (prev: MindNode[]) => MindNode[]) => {
+      setNodesState((prev) => {
+        const next = updater(prev);
+        nodesRef.current = next;
+        if (userId) localStorage.setItem(nodesKey(userId), JSON.stringify(next));
+        return next;
+      });
+    },
+    [userId],
+  );
+
+  const savePending = useCallback(() => {
+    if (userId) localStorage.setItem(pendingKey(userId), JSON.stringify(pendingRef.current));
+  }, [userId]);
+
+  const enqueue = useCallback(
+    (kind: 'upserts' | 'deletes', id: string) => {
+      const p = pendingRef.current;
+      if (kind === 'upserts') {
+        p.deletes = p.deletes.filter((d) => d !== id);
+        if (!p.upserts.includes(id)) p.upserts.push(id);
+      } else {
+        p.upserts = p.upserts.filter((u) => u !== id);
+        if (!p.deletes.includes(id)) p.deletes.push(id);
       }
+      savePending();
+    },
+    [savePending],
+  );
+
+  const flush = useCallback(async () => {
+    if (!userId || flushing.current) return;
+    const p = pendingRef.current;
+    if (p.upserts.length === 0 && p.deletes.length === 0) {
+      setSyncStatus('synced');
+      return;
+    }
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
       return;
     }
 
-    const needsMigration = stored.some((n) => n.parentId === undefined);
-    if (needsMigration) {
-      const cx = canvasWidth / 2;
-      const cy = canvasHeight / 2;
-      const migrated = stored.map((n) =>
+    flushing.current = true;
+    setSyncStatus('syncing');
+    const upsertIds = [...p.upserts];
+    const deleteIds = [...p.deletes];
+    const current = nodesRef.current;
+    const upserts = upsertIds
+      .map((id) => current.find((n) => n.id === id))
+      .filter((n): n is MindNode => !!n);
+
+    try {
+      const merged = await syncNodes({ upserts: upserts as ApiMindNode[], deletes: deleteIds });
+      // Remove only what we actually flushed; edits made mid-flight stay queued.
+      const pNow = pendingRef.current;
+      pNow.upserts = pNow.upserts.filter(
+        (id) => !upsertIds.includes(id) || nodesRef.current.find((n) => n.id === id)?.updatedAt !== upserts.find((u) => u.id === id)?.updatedAt,
+      );
+      pNow.deletes = pNow.deletes.filter((id) => !deleteIds.includes(id));
+      savePending();
+      setNodes((prev) => mergeServer(merged as MindNode[], prev, pendingRef.current));
+      setSyncStatus(
+        pendingRef.current.upserts.length || pendingRef.current.deletes.length ? 'syncing' : 'synced',
+      );
+    } catch {
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    } finally {
+      flushing.current = false;
+      const pNow = pendingRef.current;
+      if (navigator.onLine && (pNow.upserts.length || pNow.deletes.length)) {
+        scheduleFlush(2000);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, savePending, setNodes]);
+
+  const scheduleFlush = useCallback(
+    (delay = 800) => {
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = setTimeout(() => void flush(), delay);
+    },
+    [flush],
+  );
+
+  // Initial load per user: adopt local cache, migrate legacy localStorage
+  // entries on first login, then pull from the server and merge.
+  useEffect(() => {
+    if (!userId) return;
+    if (canvasWidth === 0 || canvasHeight === 0) return;
+    if (initializedFor.current === userId) return;
+    initializedFor.current = userId;
+
+    let cancelled = false;
+
+    pendingRef.current = readJson<Pending>(pendingKey(userId), { upserts: [], deletes: [] });
+    let local = loadStoredNodes(nodesKey(userId));
+
+    // First login on this browser: migrate pre-account entries.
+    if (local.length === 0 && localStorage.getItem(LEGACY_STORAGE_KEY)) {
+      const legacy = loadStoredNodes(LEGACY_STORAGE_KEY).map((n) =>
         n.parentId === undefined
-          ? { ...n, parentId: null, x: Math.round(n.x - cx), y: Math.round(n.y - cy) }
+          ? { ...n, parentId: null, x: Math.round(n.x - canvasWidth / 2), y: Math.round(n.y - canvasHeight / 2) }
           : n,
       );
-      setNodes(migrated);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
+      if (legacy.length > 0) {
+        local = legacy;
+        for (const n of legacy) enqueue('upserts', n.id);
+        localStorage.setItem(seededKey(userId), '1');
+      }
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_SEEDED_KEY);
     }
-  }, [canvasWidth, canvasHeight]);
 
-  const persist = useCallback((updater: (prev: MindNode[]) => MindNode[]) => {
-    setNodes((prev) => {
-      const next = updater(prev);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, []);
+    nodesRef.current = local;
+    setNodesState(local);
+    localStorage.setItem(nodesKey(userId), JSON.stringify(local));
+
+    (async () => {
+      try {
+        const server = await listNodes();
+        if (cancelled) return;
+        setNodes((prev) => mergeServer(server as MindNode[], prev, pendingRef.current));
+
+        const empty =
+          server.length === 0 &&
+          nodesRef.current.length === 0 &&
+          pendingRef.current.upserts.length === 0;
+        if (empty && !localStorage.getItem(seededKey(userId))) {
+          const seeded = createSeedNodes();
+          localStorage.setItem(seededKey(userId), '1');
+          setNodes(() => seeded);
+          for (const n of seeded) enqueue('upserts', n.id);
+        }
+        setSyncStatus('synced');
+        void flush();
+      } catch {
+        if (!cancelled) setSyncStatus(navigator.onLine ? 'error' : 'offline');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, canvasWidth, canvasHeight, enqueue, setNodes, flush]);
+
+  // Push queued changes as soon as the connection comes back.
+  useEffect(() => {
+    const onOnline = () => void flush();
+    window.addEventListener('online', onOnline);
+    const onOffline = () => setSyncStatus('offline');
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, [flush]);
 
   const addNode = useCallback(
     (input: { title: string; detail: string; kind: NodeKind; owner: string; parentId?: string | null }) => {
       const parentId = input.parentId ?? null;
       const now = new Date().toISOString();
       const id = generateId();
+      const current = nodesRef.current;
 
       let x: number;
       let y: number;
 
-      const parent = parentId ? nodes.find((n) => n.id === parentId) : undefined;
+      const parent = parentId ? current.find((n) => n.id === parentId) : undefined;
       if (parent) {
-        const siblings = nodes.filter((n) => n.parentId === parentId).length;
+        const siblings = current.filter((n) => n.parentId === parentId).length;
         const len = Math.hypot(parent.x, parent.y) || 1;
         const ux = parent.x / len;
         const uy = parent.y / len;
@@ -173,7 +341,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
         x = Math.round(parent.x + ux * (CHILD_OFFSET + 15) - uy * spread);
         y = Math.round(parent.y + uy * (CHILD_OFFSET + 15) + ux * spread);
       } else {
-        const roots = nodes.filter((n) => n.parentId === null).length;
+        const roots = current.filter((n) => n.parentId === null).length;
         const jitter = 1 + Math.random() * 0.2;
         const pos = radialPosition(roots, roots + 1, ORBIT_RX * jitter, ORBIT_RY * jitter);
         x = Math.round(pos.x + (Math.random() - 0.5) * 50);
@@ -194,52 +362,76 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
         y,
       };
 
-      persist((prev) => [...prev, node]);
+      setNodes((prev) => [...prev, node]);
+      enqueue('upserts', id);
+      scheduleFlush();
       return node;
     },
-    [nodes, persist],
+    [setNodes, enqueue, scheduleFlush],
   );
 
   const updateNode = useCallback(
     (id: string, changes: Partial<MindNode>) => {
-      persist((prev) =>
+      setNodes((prev) =>
         prev.map((n) => (n.id === id ? { ...n, ...changes, updatedAt: new Date().toISOString() } : n)),
       );
+      enqueue('upserts', id);
+      scheduleFlush();
     },
-    [persist],
+    [setNodes, enqueue, scheduleFlush],
   );
 
   /** Live drag updates: state only, so connection lines follow in real time. */
   const moveNodeLive = useCallback((id: string, x: number, y: number) => {
-    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, x, y } : n)));
-  }, []);
-
-  /** Called once on pointer-up so we write to storage a single time per drag. */
-  const commitPositions = useCallback(() => {
-    setNodes((prev) => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(prev));
-      return prev;
+    dirtyPositions.current.add(id);
+    setNodesState((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, x, y } : n));
+      nodesRef.current = next;
+      return next;
     });
   }, []);
+
+  /** Called once on pointer-up so we persist a single time per drag. */
+  const commitPositions = useCallback(() => {
+    const dirty = dirtyPositions.current;
+    if (dirty.size === 0) return;
+    const now = new Date().toISOString();
+    setNodes((prev) => prev.map((n) => (dirty.has(n.id) ? { ...n, updatedAt: now } : n)));
+    for (const id of dirty) enqueue('upserts', id);
+    dirty.clear();
+    scheduleFlush();
+  }, [setNodes, enqueue, scheduleFlush]);
 
   /** Removing a node promotes its children to the removed node's own parent. */
   const deleteNode = useCallback(
     (id: string) => {
-      persist((prev) => {
+      const now = new Date().toISOString();
+      const promoted: string[] = [];
+      setNodes((prev) => {
         const target = prev.find((n) => n.id === id);
         const newParent = target?.parentId ?? null;
         return prev
           .filter((n) => n.id !== id)
-          .map((n) => (n.parentId === id ? { ...n, parentId: newParent } : n));
+          .map((n) => {
+            if (n.parentId !== id) return n;
+            promoted.push(n.id);
+            return { ...n, parentId: newParent, updatedAt: now };
+          });
       });
+      enqueue('deletes', id);
+      for (const pid of promoted) enqueue('upserts', pid);
+      scheduleFlush();
     },
-    [persist],
+    [setNodes, enqueue, scheduleFlush],
   );
 
   const clearAllNodes = useCallback(() => {
-    persist(() => []);
-    localStorage.setItem(SEEDED_KEY, 'cleared');
-  }, [persist]);
+    const ids = nodesRef.current.map((n) => n.id);
+    setNodes(() => []);
+    if (userId) localStorage.setItem(seededKey(userId), 'cleared');
+    for (const id of ids) enqueue('deletes', id);
+    scheduleFlush();
+  }, [setNodes, userId, enqueue, scheduleFlush]);
 
-  return { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes };
+  return { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes, syncStatus };
 }
