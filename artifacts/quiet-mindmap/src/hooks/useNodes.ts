@@ -290,7 +290,9 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
   // entries, then (signed in only) pull from the server and merge.
   useEffect(() => {
     // Wait for Clerk so a signed-in user is never briefly treated as a guest.
-    if (!isLoaded) return;
+    // `storeId` is null exactly while Clerk is still loading, so testing it
+    // instead of `isLoaded` is the same guard and also narrows it to a string.
+    if (storeId === null) return;
     if (canvasWidth === 0 || canvasHeight === 0) return;
     if (initializedFor.current === storeId) return;
     initializedFor.current = storeId;
