@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAuth } from '@clerk/expo';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
@@ -32,7 +33,8 @@ export default function ListScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { nodes, loading } = useNodes();
+  const { nodes, loading, syncStatus } = useNodes();
+  const { signOut } = useAuth();
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [kindFilter, setKindFilter] = useState<NodeKind | null>(null);
@@ -72,10 +74,23 @@ export default function ListScreen() {
               {openCount === 0
                 ? 'All clear'
                 : `${openCount} open ${openCount === 1 ? 'entry' : 'entries'}`}
+              {syncStatus === 'syncing' && '  ·  Syncing…'}
+              {syncStatus === 'offline' && '  ·  Offline'}
+              {syncStatus === 'error' && '  ·  Sync error'}
             </Text>
           </View>
-          <View style={[styles.orb, { borderColor: colors.primary }]}>
-            <View style={[styles.orbCore, { backgroundColor: colors.primary }]} />
+          <View style={styles.headerActions}>
+            <Pressable
+              testID="sign-out"
+              onPress={() => void signOut()}
+              hitSlop={8}
+              style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+            >
+              <Feather name="log-out" size={18} color={colors.mutedForeground} />
+            </Pressable>
+            <View style={[styles.orb, { borderColor: colors.primary }]}>
+              <View style={[styles.orbCore, { backgroundColor: colors.primary }]} />
+            </View>
           </View>
         </View>
 
@@ -207,6 +222,7 @@ export default function ListScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: { paddingHorizontal: 20, paddingBottom: 12, gap: 12 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
