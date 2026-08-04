@@ -47,8 +47,10 @@ catalog:
   '@tailwindcss/vite': ^4.1.14
   '@tanstack/react-query': ^5.90.21
   '@types/node': ^25.3.3
-  '@types/react': ^19.2.0
-  '@types/react-dom': ^19.2.0
+  # Must stay on 19.1.x to match the expo-pinned react 19.1.0 and avoid
+  # duplicate @types/react versions breaking typecheck
+  '@types/react': ~19.1.10
+  '@types/react-dom': ~19.1.7
   '@vitejs/plugin-react': ^5.0.4
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
@@ -156,5 +158,9 @@ overrides:
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-ia32": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-"
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
+  # Force a single @types/react version workspace-wide (duplicate versions
+  # cause TS2322 "two different types with this name" errors)
+  "@types/react": "~19.1.10"
+  "@types/react-dom": "~19.1.7"
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   esbuild: "0.27.3"

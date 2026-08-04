@@ -1,1 +1,2 @@
 - [OpenAPI codegen quirks](openapi-codegen-quirks.md) — never use `type: integer` in the spec; Orval emits zod-4-only `z.int()` and libs typecheck breaks.
+- [Single @types/react version](react-types-single-version.md) — keep one 19.1.x version via catalog + overrides; duplicates cause cryptic TS2322 ref errors.
