@@ -3,15 +3,17 @@ import { useUser } from '@clerk/react';
 import { listNodes, syncNodes } from '@workspace/api-client-react';
 import type { MindNode as ApiMindNode } from '@workspace/api-client-react';
 import type { MindNode, NodeKind } from '../types';
+import { GUEST_STORE_ID } from '../config';
 
 const LEGACY_STORAGE_KEY = 'quiet-mindmap-nodes';
 const LEGACY_SEEDED_KEY = 'quiet-mindmap-seeded';
 
-const nodesKey = (userId: string) => `quiet-mindmap-nodes:${userId}`;
-const pendingKey = (userId: string) => `quiet-mindmap-pending:${userId}`;
-const seededKey = (userId: string) => `quiet-mindmap-seeded:${userId}`;
+const nodesKey = (storeId: string) => `quiet-mindmap-nodes:${storeId}`;
+const pendingKey = (storeId: string) => `quiet-mindmap-pending:${storeId}`;
+const seededKey = (storeId: string) => `quiet-mindmap-seeded:${storeId}`;
 
-export type SyncStatus = 'syncing' | 'synced' | 'offline' | 'error';
+/** `local` = signed out: this browser only, never sent anywhere. */
+export type SyncStatus = 'syncing' | 'synced' | 'offline' | 'error' | 'local';
 
 interface Pending {
   upserts: string[];
@@ -150,8 +152,11 @@ function mergeServer(server: MindNode[], local: MindNode[], pending: Pending): M
 }
 
 export function useNodes(canvasWidth: number, canvasHeight: number) {
-  const { user } = useUser();
+  const { user, isLoaded } = useUser();
   const userId = user?.id ?? null;
+  /** Signed out: keep everything in this browser, talk to no server. */
+  const isGuest = isLoaded && !userId;
+  const storeId = userId ?? GUEST_STORE_ID;
 
   const [nodes, setNodesState] = useState<MindNode[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
@@ -168,19 +173,21 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       setNodesState((prev) => {
         const next = updater(prev);
         nodesRef.current = next;
-        if (userId) localStorage.setItem(nodesKey(userId), JSON.stringify(next));
+        localStorage.setItem(nodesKey(storeId), JSON.stringify(next));
         return next;
       });
     },
-    [userId],
+    [storeId],
   );
 
   const savePending = useCallback(() => {
-    if (userId) localStorage.setItem(pendingKey(userId), JSON.stringify(pendingRef.current));
-  }, [userId]);
+    localStorage.setItem(pendingKey(storeId), JSON.stringify(pendingRef.current));
+  }, [storeId]);
 
   const enqueue = useCallback(
     (kind: 'upserts' | 'deletes', id: string) => {
+      // Nothing to upload when signed out — don't accumulate a phantom queue.
+      if (isGuest) return;
       const p = pendingRef.current;
       if (kind === 'upserts') {
         p.deletes = p.deletes.filter((d) => d !== id);
@@ -191,10 +198,15 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       }
       savePending();
     },
-    [savePending],
+    [isGuest, savePending],
   );
 
   const flush = useCallback(async () => {
+    // Guests have no account to sync to; their map lives in this browser.
+    if (isGuest) {
+      setSyncStatus('local');
+      return;
+    }
     if (!userId || flushing.current) return;
     const p = pendingRef.current;
     if (p.upserts.length === 0 && p.deletes.length === 0) {
@@ -238,7 +250,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, savePending, setNodes]);
+  }, [userId, isGuest, savePending, setNodes]);
 
   const scheduleFlush = useCallback(
     (delay = 800) => {
@@ -248,20 +260,21 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     [flush],
   );
 
-  // Initial load per user: adopt local cache, migrate legacy localStorage
-  // entries on first login, then pull from the server and merge.
+  // Initial load per store: adopt the local cache, migrate legacy localStorage
+  // entries, then (signed in only) pull from the server and merge.
   useEffect(() => {
-    if (!userId) return;
+    // Wait for Clerk so a signed-in user is never briefly treated as a guest.
+    if (!isLoaded) return;
     if (canvasWidth === 0 || canvasHeight === 0) return;
-    if (initializedFor.current === userId) return;
-    initializedFor.current = userId;
+    if (initializedFor.current === storeId) return;
+    initializedFor.current = storeId;
 
     let cancelled = false;
 
-    pendingRef.current = readJson<Pending>(pendingKey(userId), { upserts: [], deletes: [] });
-    let local = loadStoredNodes(nodesKey(userId));
+    pendingRef.current = readJson<Pending>(pendingKey(storeId), { upserts: [], deletes: [] });
+    let local = loadStoredNodes(nodesKey(storeId));
 
-    // First login on this browser: migrate pre-account entries.
+    // First run under this store on this browser: adopt pre-account entries.
     if (local.length === 0 && localStorage.getItem(LEGACY_STORAGE_KEY)) {
       const legacy = loadStoredNodes(LEGACY_STORAGE_KEY).map((n) =>
         n.parentId === undefined
@@ -270,8 +283,8 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       );
       if (legacy.length > 0) {
         local = legacy;
-        for (const n of legacy) enqueue('upserts', n.id);
-        localStorage.setItem(seededKey(userId), '1');
+        if (!isGuest) for (const n of legacy) enqueue('upserts', n.id);
+        localStorage.setItem(seededKey(storeId), '1');
       }
       localStorage.removeItem(LEGACY_STORAGE_KEY);
       localStorage.removeItem(LEGACY_SEEDED_KEY);
@@ -279,7 +292,19 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
 
     nodesRef.current = local;
     setNodesState(local);
-    localStorage.setItem(nodesKey(userId), JSON.stringify(local));
+    localStorage.setItem(nodesKey(storeId), JSON.stringify(local));
+
+    if (isGuest) {
+      if (local.length === 0 && !localStorage.getItem(seededKey(storeId))) {
+        const seeded = createSeedNodes();
+        localStorage.setItem(seededKey(storeId), '1');
+        setNodes(() => seeded);
+      }
+      setSyncStatus('local');
+      return () => {
+        cancelled = true;
+      };
+    }
 
     (async () => {
       try {
@@ -291,9 +316,9 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
           server.length === 0 &&
           nodesRef.current.length === 0 &&
           pendingRef.current.upserts.length === 0;
-        if (empty && !localStorage.getItem(seededKey(userId))) {
+        if (empty && !localStorage.getItem(seededKey(storeId))) {
           const seeded = createSeedNodes();
-          localStorage.setItem(seededKey(userId), '1');
+          localStorage.setItem(seededKey(storeId), '1');
           setNodes(() => seeded);
           for (const n of seeded) enqueue('upserts', n.id);
         }
@@ -307,10 +332,11 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     return () => {
       cancelled = true;
     };
-  }, [userId, canvasWidth, canvasHeight, enqueue, setNodes, flush]);
+  }, [isLoaded, isGuest, storeId, canvasWidth, canvasHeight, enqueue, setNodes, flush]);
 
   // Push queued changes as soon as the connection comes back.
   useEffect(() => {
+    if (isGuest) return;
     const onOnline = () => void flush();
     window.addEventListener('online', onOnline);
     const onOffline = () => setSyncStatus('offline');
@@ -319,7 +345,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
-  }, [flush]);
+  }, [isGuest, flush]);
 
   const addNode = useCallback(
     (input: { title: string; detail: string; kind: NodeKind; owner: string; parentId?: string | null }) => {

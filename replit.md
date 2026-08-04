@@ -37,7 +37,9 @@ A private, space-inspired mindmap for directors and managers to capture, classif
 
 ## Architecture decisions
 
-- **Auth**: Replit-managed Clerk (web routes `/sign-in/*?`, `/sign-up/*?`; landing at `/` for signed-out users, map at `/map`). API routes are protected by `requireAuth` (Clerk session) and every query is scoped to the Clerk `userId`.
+- **Auth**: Replit-managed Clerk (web routes `/sign-in/*?`, `/sign-up/*?`; map at `/map`). API routes are protected by `requireAuth` (Clerk session) and every query is scoped to the Clerk `userId`.
+- **Sign-in is currently OPTIONAL** — `REQUIRE_SIGN_IN` in `artifacts/quiet-mindmap/src/config.ts` is `false`, so `/` sends anonymous visitors straight to the map and they get a guest store (`…:guest` localStorage keys, `syncStatus: 'local'`, no network calls, no pending queue). Flip the flag to `true` to restore the wall; the landing page stays reachable at `/welcome` either way. Guest entries are deliberately **not** merged into an account on sign-in — they stay under the guest keys so signing in/out is non-destructive and predictable.
+- The **mobile** app still requires sign-in (`app/(home)/_layout.tsx`) — it has no guest mode, because its whole purpose is the synced map.
 - **Sync architecture (offline-first)**: `useNodes` keeps a per-user localStorage cache (`quiet-mindmap-nodes:<userId>`) plus a pending-op queue (`quiet-mindmap-pending:<userId>`). Mutations apply locally first, enqueue upsert/delete ids, and a debounced flush POSTs `/api/nodes/sync` (batch upserts + deletes → merged list). Conflict resolution is last-write-wins by client `updatedAt`, enforced both server-side (`onConflictDoUpdate` with `setWhere updatedAt <=`) and in the client merge. The `online` event triggers a flush.
 - **Legacy migration**: pre-account entries in the old `quiet-mindmap-nodes` localStorage key are adopted and uploaded on first login on that browser, then the legacy key is removed.
 - Node `id` and timestamps are client-generated so offline-created entries keep a stable identity across devices.
@@ -58,6 +60,7 @@ A private, space-inspired mindmap for directors and managers to capture, classif
 - Sub-items: "Sub-item" on the detail card nests an entry under another; children render smaller with a dashed link to their parent, and parents show a child count
 - Navigation: scroll/pinch to zoom around the cursor, drag empty space to pan, +/− buttons zoom around centre, and the percentage button fits the whole map on screen (floored at 75% so labels stay readable)
 - Add/edit via slide-in panel; press `N` to add, `Esc` to close
+- Bottom-left button is the account control: "Sign in to sync" when signed out, "Sign out" when signed in. It is the only route back to the synced map while the sign-in wall is off, so keep it visible.
 - Privacy badge confirms data stays on device
 
 ## User preferences

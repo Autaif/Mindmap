@@ -4,6 +4,7 @@ import { dark } from '@clerk/themes';
 import { Switch, Route, Redirect, useLocation, Router as WouterRouter } from 'wouter';
 import { MindmapPage } from './pages/MindmapPage';
 import { LandingPage } from './pages/LandingPage';
+import { REQUIRE_SIGN_IN } from './config';
 
 // REQUIRED — copy verbatim. Resolves the key from window.location.hostname so the
 // same build serves multiple Clerk custom domains.
@@ -113,14 +114,16 @@ function HomeRedirect() {
       <Show when="signed-in">
         <Redirect to="/map" />
       </Show>
-      <Show when="signed-out">
-        <LandingPage />
-      </Show>
+      <Show when="signed-out">{REQUIRE_SIGN_IN ? <LandingPage /> : <Redirect to="/map" />}</Show>
     </>
   );
 }
 
 function MapRoute() {
+  // With sign-in optional, anonymous visitors get the map immediately and
+  // their entries live only in their own browser.
+  if (!REQUIRE_SIGN_IN) return <MindmapPage />;
+
   return (
     <>
       <Show when="signed-in">
@@ -131,6 +134,11 @@ function MapRoute() {
       </Show>
     </>
   );
+}
+
+/** Reachable at /welcome even when the sign-in wall is off. */
+function LandingRoute() {
+  return <LandingPage />;
 }
 
 function ClerkProviderWithRoutes() {
@@ -162,6 +170,7 @@ function ClerkProviderWithRoutes() {
     >
       <Switch>
         <Route path="/" component={HomeRedirect} />
+        <Route path="/welcome" component={LandingRoute} />
         <Route path="/map" component={MapRoute} />
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />

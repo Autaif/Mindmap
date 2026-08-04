@@ -6,7 +6,8 @@ import { NodePanel } from '../components/NodePanel';
 import { FilterBar } from '../components/FilterBar';
 import { DigestPanel, getStaleOpenNodes, useWeeklyDigestNotification } from '../components/DigestPanel';
 import { ZoomControls } from '../components/ZoomControls';
-import { useClerk } from '@clerk/react';
+import { useClerk, useUser } from '@clerk/react';
+import { useLocation } from 'wouter';
 import { useNodes, type SyncStatus } from '../hooks/useNodes';
 import type { MindNode, NodeKind, NodeStatus, Viewport } from '../types';
 import { KIND_META, clampScale } from '../types';
@@ -18,6 +19,7 @@ const SYNC_LABEL: Record<SyncStatus, string> = {
   syncing: 'Private to your account · syncing…',
   offline: 'Offline — changes saved, will sync when back online',
   error: 'Sync paused — retrying',
+  local: 'Saved on this device only · sign in to sync',
 };
 
 function PrivacyBadge({ status }: { status: SyncStatus }) {
@@ -57,29 +59,42 @@ function PrivacyBadge({ status }: { status: SyncStatus }) {
   );
 }
 
-function SignOutButton() {
+/**
+ * Signed in: offers sign out. Signed out: offers the way back to the private,
+ * synced map — the only route to it once the sign-in wall is off.
+ */
+function AccountButton() {
   const { signOut } = useClerk();
+  const { isSignedIn } = useUser();
+  const [, setLocation] = useLocation();
+
+  const signedIn = !!isSignedIn;
+
   return (
     <button
       type="button"
-      onClick={() => signOut({ redirectUrl: import.meta.env.BASE_URL || '/' })}
+      onClick={() =>
+        signedIn ? signOut({ redirectUrl: import.meta.env.BASE_URL || '/' }) : setLocation('/sign-in')
+      }
       style={{
+        // Bottom-left is the only free corner: the filter bar owns the top row,
+        // the zoom controls the bottom-right, the privacy badge the centre.
         position: 'fixed',
-        top: 18,
-        right: 18,
+        bottom: 18,
+        left: 18,
         zIndex: 70,
         padding: '6px 13px',
         borderRadius: 9,
-        border: '1px solid hsl(228,25%,20%)',
-        background: 'rgba(13,15,33,0.75)',
-        color: 'hsl(220,15%,55%)',
+        border: `1px solid ${signedIn ? 'hsl(228,25%,20%)' : 'rgba(139,92,246,0.35)'}`,
+        background: signedIn ? 'rgba(13,15,33,0.75)' : 'rgba(139,92,246,0.14)',
+        color: signedIn ? 'hsl(220,15%,55%)' : 'hsl(262,65%,76%)',
         fontSize: 12,
         fontWeight: 600,
         cursor: 'pointer',
         backdropFilter: 'blur(6px)',
       }}
     >
-      Sign out
+      {signedIn ? 'Sign out' : 'Sign in to sync'}
     </button>
   );
 }
@@ -852,7 +867,7 @@ export function MindmapPage() {
       />
 
       <PrivacyBadge status={syncStatus} />
-      <SignOutButton />
+      <AccountButton />
     </div>
   );
 }
