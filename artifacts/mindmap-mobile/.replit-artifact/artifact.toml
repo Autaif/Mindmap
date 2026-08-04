@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/mindmap-mobile/"
+title = "Quiet Mindmap Mobile"
+description = "A mobile companion for the Quiet Mindmap web app. Lets managers quickly capture concerns, ideas, urgent items, and tasks on the go, browse a scrollable list of open entries, and mark items handled or archived. Mirrors the space-inspired dark visual identity of the web app."
+version = "1.0.0"
+id = "artifacts/mindmap-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/mindmap-mobile/" ]
+localPort = 23784
+
+[services.development]
+run = "pnpm --filter @workspace/mindmap-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/mindmap-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/mindmap-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "23784"
+BASE_PATH = "/mindmap-mobile/"

@@ -21,6 +21,12 @@ A private, space-inspired mindmap for directors and managers to capture, classif
 - Validation: Zod (`zod/v4`), `drizzle-zod`
 - API codegen: Orval (from OpenAPI spec)
 
+## Mobile companion
+
+- `artifacts/mindmap-mobile/` — Expo app (previewPath `/mindmap-mobile/`), standalone AsyncStorage persistence for now (same `MindNode` shape as web; syncs later via the shared backend once device-sync ships)
+- Screens: `app/index.tsx` (open-entries list + status/kind filters + capture FAB), `app/capture.tsx` (quick-capture modal), `app/entry/[id].tsx` (detail: mark handled, archive, edit, delete)
+- Dark-only space theme in `constants/colors.ts` (both light/dark keys carry the same palette)
+
 ## Where things live
 
 - `artifacts/quiet-mindmap/src/pages/MindmapPage.tsx` — main page (canvas, viewport/zoom/pan, connection lines, filters, detail card)
