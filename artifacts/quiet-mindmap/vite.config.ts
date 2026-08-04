@@ -5,13 +5,11 @@ import { defineConfig } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    'PORT environment variable is required but was not provided.',
-  );
-}
+// PORT and BASE_PATH are injected by the Replit workflow runner. Off Replit
+// (local development) nothing sets them, so fall back to plain local defaults
+// rather than refusing to start. On Replit both are always present, so the
+// deployed behaviour is unchanged.
+const rawPort = process.env.PORT ?? '5173';
 
 const port = Number(rawPort);
 
@@ -19,13 +17,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH;
-
-if (!basePath) {
-  throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
-  );
-}
+const basePath = process.env.BASE_PATH ?? '/';
 
 export default defineConfig({
   base: basePath,
