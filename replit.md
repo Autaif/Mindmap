@@ -6,7 +6,7 @@ A private, space-inspired mindmap for directors and managers to capture, classif
 
 - `pnpm --filter @workspace/quiet-mindmap run dev` — run the mindmap frontend (port assigned by workflow)
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
-- `pnpm run typecheck` — full typecheck across all packages
+- `pnpm run typecheck` — full typecheck across all packages (registered as the `typecheck` validation step; runs automatically before tasks ship). If route-string type errors appear in the mobile app, restart the expo workflow first — Expo typed routes (`.expo/types/router.d.ts`) go stale when routes are added while the dev server is stopped.
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
