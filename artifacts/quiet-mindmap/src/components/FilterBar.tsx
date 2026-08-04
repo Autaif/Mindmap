@@ -11,12 +11,15 @@ interface Props {
   onStatusFilter: (v: NodeStatus | 'all') => void;
   onAdd: () => void;
   totalOpen: number;
+  staleCount: number;
+  digestOpen: boolean;
+  onToggleDigest: () => void;
 }
 
 const KINDS: (NodeKind | 'all')[] = ['all', 'urgent', 'concern', 'idea', 'task'];
 const STATUSES: (NodeStatus | 'all')[] = ['all', 'open', 'handled', 'archived'];
 
-export function FilterBar({ search, onSearch, kindFilter, onKindFilter, statusFilter, onStatusFilter, onAdd, totalOpen }: Props) {
+export function FilterBar({ search, onSearch, kindFilter, onKindFilter, statusFilter, onStatusFilter, onAdd, totalOpen, staleCount, digestOpen, onToggleDigest }: Props) {
   return (
     <motion.div
       initial={{ y: -20, opacity: 0 }}
@@ -136,6 +139,46 @@ export function FilterBar({ search, onSearch, kindFilter, onKindFilter, statusFi
       </div>
 
       <div style={{ flex: 1 }} />
+
+      {/* Weekly digest */}
+      <button
+        onClick={onToggleDigest}
+        title={`Entries open for more than 7 days${staleCount ? ` (${staleCount})` : ''}`}
+        style={{
+          padding: '6px 11px',
+          borderRadius: '8px',
+          border: `1px solid ${digestOpen ? 'hsl(262,60%,65%)' : staleCount > 0 ? 'rgba(251,191,36,0.35)' : 'hsl(228,25%,18%)'}`,
+          background: digestOpen ? 'rgba(139,92,246,0.12)' : staleCount > 0 ? 'rgba(251,191,36,0.08)' : 'transparent',
+          color: digestOpen ? 'hsl(262,65%,72%)' : staleCount > 0 ? '#fbbf24' : 'hsl(220,15%,50%)',
+          fontSize: '12px',
+          fontWeight: 600,
+          cursor: 'pointer',
+          transition: 'all 0.15s',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          whiteSpace: 'nowrap',
+          flexShrink: 0,
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 15 15" fill="none">
+          <circle cx="7.5" cy="7.5" r="6" stroke="currentColor" strokeWidth="1.4" />
+          <path d="M7.5 4v3.5l2.3 2.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </svg>
+        This week
+        {staleCount > 0 && (
+          <span style={{
+            fontSize: 10,
+            fontWeight: 700,
+            background: 'rgba(251,191,36,0.18)',
+            borderRadius: 5,
+            padding: '1px 5px',
+            color: '#fbbf24',
+          }}>
+            {staleCount}
+          </span>
+        )}
+      </button>
 
       {/* Open count */}
       {totalOpen > 0 && (

@@ -4,6 +4,7 @@ import { StarField } from '../components/StarField';
 import { NodeBubble } from '../components/NodeBubble';
 import { NodePanel } from '../components/NodePanel';
 import { FilterBar } from '../components/FilterBar';
+import { DigestPanel, getStaleOpenNodes, useWeeklyDigestNotification } from '../components/DigestPanel';
 import { ZoomControls } from '../components/ZoomControls';
 import { useClerk } from '@clerk/react';
 import { useNodes, type SyncStatus } from '../hooks/useNodes';
@@ -416,6 +417,7 @@ export function MindmapPage() {
   const [kindFilter, setKindFilter] = useState<NodeKind | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<NodeStatus | 'all'>('open');
   const [showClearPrompt, setShowClearPrompt] = useState(false);
+  const [digestOpen, setDigestOpen] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(() => !!localStorage.getItem(DISMISS_KEY));
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
@@ -598,6 +600,10 @@ export function MindmapPage() {
   const visibleNodes = useMemo(() => nodes.filter(matchesFilters), [nodes, matchesFilters]);
   const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
   const totalOpen = nodes.filter((n) => n.status === 'open').length;
+  const staleCount = useMemo(() => getStaleOpenNodes(nodes).length, [nodes]);
+
+  const openDigest = useCallback(() => setDigestOpen(true), []);
+  useWeeklyDigestNotification(staleCount, openDigest);
 
   const handleStatusChange = useCallback(
     (id: string, status: NodeStatus) => {
@@ -710,7 +716,24 @@ export function MindmapPage() {
         onStatusFilter={setStatusFilter}
         onAdd={openAdd}
         totalOpen={totalOpen}
+        staleCount={staleCount}
+        digestOpen={digestOpen}
+        onToggleDigest={() => setDigestOpen((v) => !v)}
       />
+
+      <AnimatePresence>
+        {digestOpen && (
+          <DigestPanel
+            nodes={nodes}
+            onClose={() => setDigestOpen(false)}
+            onSelect={(id) => {
+              setSelectedId(id);
+              setPanelMode(null);
+            }}
+            onMarkHandled={(id) => handleStatusChange(id, 'handled')}
+          />
+        )}
+      </AnimatePresence>
 
       {showSeedNotice && !showClearPrompt && (
         <motion.div
