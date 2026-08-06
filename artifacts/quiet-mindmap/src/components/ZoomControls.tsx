@@ -1,5 +1,10 @@
 import { motion } from 'framer-motion';
 import { MAX_SCALE, MIN_SCALE } from '../types';
+import { glassSurface } from '../lib/glass';
+import { RADIUS_MD, SHADOW_FLOAT, BORDER_SUBTLE, BORDER_W, ACCENT_BG, Z } from '../lib/tokens';
+import { T_CONTROL } from '../lib/motion';
+import { hoverStyle } from '../lib/hover';
+import { useMotionPrefs } from '../hooks/useMotionPrefs';
 
 interface Props {
   scale: number;
@@ -18,15 +23,13 @@ const buttonStyle: React.CSSProperties = {
   border: 'none',
   cursor: 'pointer',
   color: 'hsl(220,15%,60%)',
-  transition: 'color 0.15s, background 0.15s',
+  transition: T_CONTROL,
 };
 
-export function ZoomControls({ scale, onZoomIn, onZoomOut, onReset }: Props) {
-  const hover = (on: boolean) => (e: React.MouseEvent<HTMLButtonElement>) => {
-    e.currentTarget.style.color = on ? 'hsl(262,65%,75%)' : 'hsl(220,15%,60%)';
-    e.currentTarget.style.background = on ? 'rgba(139,92,246,0.12)' : 'transparent';
-  };
+const buttonHover = hoverStyle({ color: 'hsl(262,65%,75%)', background: ACCENT_BG });
 
+export function ZoomControls({ scale, onZoomIn, onZoomOut, onReset }: Props) {
+  const prefs = useMotionPrefs();
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -36,16 +39,12 @@ export function ZoomControls({ scale, onZoomIn, onZoomOut, onReset }: Props) {
         position: 'fixed',
         right: 18,
         bottom: 18,
-        zIndex: 70,
+        zIndex: Z.chrome,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'stretch',
-        background: 'rgba(13,15,33,0.85)',
-        border: '1px solid hsl(228,25%,20%)',
-        borderRadius: 12,
-        backdropFilter: 'blur(10px)',
         overflow: 'hidden',
-        boxShadow: '0 8px 28px rgba(0,0,0,0.4)',
+        ...glassSurface('bar', { radius: RADIUS_MD, shadow: SHADOW_FLOAT, blur: prefs.blurBar }),
       }}
     >
       <button
@@ -54,8 +53,7 @@ export function ZoomControls({ scale, onZoomIn, onZoomOut, onReset }: Props) {
         title="Zoom in"
         aria-label="Zoom in"
         style={{ ...buttonStyle, opacity: scale >= MAX_SCALE ? 0.35 : 1 }}
-        onMouseEnter={hover(true)}
-        onMouseLeave={hover(false)}
+        {...buttonHover}
       >
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
           <path d="M7.5 2.5v10M2.5 7.5h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -72,11 +70,10 @@ export function ZoomControls({ scale, onZoomIn, onZoomOut, onReset }: Props) {
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: '0.02em',
-          borderTop: '1px solid hsl(228,25%,18%)',
-          borderBottom: '1px solid hsl(228,25%,18%)',
+          borderTop: `${BORDER_W}px solid ${BORDER_SUBTLE}`,
+          borderBottom: `${BORDER_W}px solid ${BORDER_SUBTLE}`,
         }}
-        onMouseEnter={hover(true)}
-        onMouseLeave={hover(false)}
+        {...buttonHover}
       >
         {Math.round(scale * 100)}%
       </button>
@@ -87,8 +84,7 @@ export function ZoomControls({ scale, onZoomIn, onZoomOut, onReset }: Props) {
         title="Zoom out"
         aria-label="Zoom out"
         style={{ ...buttonStyle, opacity: scale <= MIN_SCALE ? 0.35 : 1 }}
-        onMouseEnter={hover(true)}
-        onMouseLeave={hover(false)}
+        {...buttonHover}
       >
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
           <path d="M2.5 7.5h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />

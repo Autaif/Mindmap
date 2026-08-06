@@ -97,18 +97,42 @@
 }
 
 @keyframes hub-breathe {
-  0%, 100% { box-shadow: 0 0 30px 8px rgba(139, 92, 246, 0.25), 0 0 80px 20px rgba(139, 92, 246, 0.08); }
-  50% { box-shadow: 0 0 40px 15px rgba(139, 92, 246, 0.4), 0 0 100px 30px rgba(139, 92, 246, 0.15); }
+  0%, 100% { box-shadow: 0 0 30px 8px rgba(var(--hub-rgb, 139, 92, 246), 0.25), 0 0 80px 20px rgba(var(--hub-rgb, 139, 92, 246), 0.08); }
+  50% { box-shadow: 0 0 40px 15px rgba(var(--hub-rgb, 139, 92, 246), 0.4), 0 0 100px 30px rgba(var(--hub-rgb, 139, 92, 246), 0.15); }
 }
 
-/* Node orbit line */
+/* Node orbit line. Only drives the animation — NOT stroke-dasharray: each
+   <line> sets its own via the strokeDasharray prop (root vs sub-item links
+   dash differently), and a CSS class rule here would override that
+   per-element presentation attribute for every line, not just override it
+   selectively. */
 .orbit-line {
-  stroke-dasharray: 4 8;
   animation: orbit-flow 20s linear infinite;
 }
 
 @keyframes orbit-flow {
   to { stroke-dashoffset: -200; }
+}
+
+/*
+ * Reduced motion: freeze the three infinite/always-on animations. Each rule
+ * also pins the property the keyframes were driving to its resting value —
+ * without that, `animation: none` alone would leave stars at their initial
+ * (mostly invisible) opacity and hub-pulse with no glow at all, rather than
+ * a calm, static version of the effect.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .star {
+    animation: none;
+    opacity: calc((var(--min-opacity, 0.2) + var(--max-opacity, 0.8)) / 2);
+  }
+  .hub-pulse {
+    animation: none;
+    box-shadow: 0 0 30px 8px rgba(var(--hub-rgb, 139, 92, 246), 0.25), 0 0 80px 20px rgba(var(--hub-rgb, 139, 92, 246), 0.08);
+  }
+  .orbit-line {
+    animation: none;
+  }
 }
 
 /* Scrollbar */

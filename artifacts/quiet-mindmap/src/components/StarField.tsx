@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useMotionPrefs } from '../hooks/useMotionPrefs';
 
 interface Star {
   id: number;
@@ -29,7 +30,8 @@ function generateStars(count: number): Star[] {
 }
 
 export function StarField() {
-  const stars = useMemo(() => generateStars(140), []);
+  const prefs = useMotionPrefs();
+  const stars = useMemo(() => generateStars(prefs.starCount), [prefs.starCount]);
 
   return (
     <div className="star-field">

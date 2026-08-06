@@ -3,7 +3,8 @@ import { useUser } from '@clerk/react';
 import { listNodes, syncNodes } from '@workspace/api-client-react';
 import type { MindNode as ApiMindNode } from '@workspace/api-client-react';
 import type { MindNode, NodeKind } from '../types';
-import { GUEST_STORE_ID } from '../config';
+import { guestStoreId } from '../lib/persona';
+import { seedsFor } from '../lib/seeds';
 
 const LEGACY_STORAGE_KEY = 'quiet-mindmap-nodes';
 const LEGACY_SEEDED_KEY = 'quiet-mindmap-seeded';
@@ -40,56 +41,16 @@ function radialPosition(index: number, total: number, rx = ORBIT_RX, ry = ORBIT_
   };
 }
 
-type SeedSpec = Omit<MindNode, 'id' | 'createdAt' | 'updatedAt' | 'x' | 'y' | 'parentId'> & {
-  children?: Omit<MindNode, 'id' | 'createdAt' | 'updatedAt' | 'x' | 'y' | 'parentId'>[];
-};
-
-const SEED_NODES: SeedSpec[] = [
-  {
-    title: 'Budget review delay',
-    detail: "Finance said Q3 numbers won't be ready until next week. Need to reschedule the board meeting.",
-    kind: 'urgent',
-    owner: 'Finance',
-    status: 'open',
-    children: [
-      { title: 'Reschedule board meeting', detail: 'Find a slot after the numbers land.', kind: 'task', owner: 'Me', status: 'open' },
-    ],
-  },
-  {
-    title: 'New workflow proposal from Ana',
-    detail: 'Ana wants to restructure onboarding. She has a draft doc — promising, needs my sign-off.',
-    kind: 'idea',
-    owner: 'Ana',
-    status: 'open',
-  },
-  {
-    title: 'Team morale after restructuring',
-    detail: 'Several people seem unsettled. Worth a one-on-one round before the all-hands.',
-    kind: 'concern',
-    owner: 'Team',
-    status: 'open',
-    children: [
-      { title: 'One-on-one round', detail: 'Start with the people closest to the change.', kind: 'task', owner: 'Me', status: 'open' },
-    ],
-  },
-  { title: 'Update Q4 roadmap', detail: 'Product asked for priority changes by Friday.', kind: 'task', owner: 'Product', status: 'open' },
-  {
-    title: 'Carlos needs clearer role definition',
-    detail: 'He mentioned feeling uncertain about scope in two meetings. Not critical yet, but worth addressing.',
-    kind: 'concern',
-    owner: 'Carlos',
-    status: 'open',
-  },
-];
-
-function createSeedNodes(): MindNode[] {
+function createSeedNodes(storeId: string): MindNode[] {
   const now = new Date().toISOString();
   const out: MindNode[] = [];
+  const specs = seedsFor(storeId);
 
-  SEED_NODES.forEach((spec, i) => {
+  specs.forEach((spec, i) => {
     const { children, ...rest } = spec;
-    const pos = radialPosition(i, SEED_NODES.length);
-    const parentId = generateId();
+    const pos = radialPosition(i, specs.length);
+    // Seeds carry their own id so seeded attachments can point at them.
+    const parentId = rest.id || generateId();
     out.push({ ...rest, id: parentId, parentId: null, createdAt: now, updatedAt: now, ...pos });
 
     (children ?? []).forEach((child, ci) => {
@@ -99,7 +60,7 @@ function createSeedNodes(): MindNode[] {
       const spread = (ci - ((children!.length - 1) / 2)) * 90;
       out.push({
         ...child,
-        id: generateId(),
+        id: child.id || generateId(),
         parentId,
         createdAt: now,
         updatedAt: now,
@@ -122,9 +83,30 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+/**
+ * Repair one stored record's geometry. Coordinates are the only field that can
+ * break the whole map if malformed: a single non-finite x/y flows through
+ * `fitView`'s min/max into `clampScale`, and a NaN `view.scale` renders as
+ * `transform: scale(NaN)` — an invalid declaration the browser drops entirely,
+ * disabling pan, zoom, drag and line alignment at once with no error logged.
+ *
+ * The entry itself is always kept: the title and notes are what the user cannot
+ * recover from anywhere else, so a bad coordinate is repaired to the origin
+ * (draggable back out) rather than being a reason to discard the record.
+ */
+function sanitizeNode(n: MindNode): MindNode {
+  const x = Number(n.x);
+  const y = Number(n.y);
+  if (Number.isFinite(x) && Number.isFinite(y)) return n;
+  return { ...n, x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
+}
+
 function loadStoredNodes(key: string): MindNode[] {
   const parsed = readJson<unknown>(key, []);
-  return Array.isArray(parsed) ? (parsed as MindNode[]) : [];
+  if (!Array.isArray(parsed)) return [];
+  // Never trust stored geometry — this data outlives any given build, so a
+  // record corrupted by an older version keeps breaking every future one.
+  return (parsed as MindNode[]).filter((n) => !!n && typeof n.id === 'string').map(sanitizeNode);
 }
 
 /** Last-write-wins merge of server nodes with locally-pending edits. */
@@ -161,7 +143,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
    * so committing to a store before that would write their entries into the
    * guest bucket.
    */
-  const storeId = isLoaded ? (userId ?? GUEST_STORE_ID) : null;
+  const storeId = isLoaded ? (userId ?? guestStoreId()) : null;
 
   const [nodes, setNodesState] = useState<MindNode[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
@@ -324,7 +306,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
 
     if (isGuest) {
       if (local.length === 0 && !localStorage.getItem(seededKey(storeId))) {
-        const seeded = createSeedNodes();
+        const seeded = createSeedNodes(storeId);
         localStorage.setItem(seededKey(storeId), '1');
         setNodes(() => seeded);
       }
@@ -345,7 +327,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
           nodesRef.current.length === 0 &&
           pendingRef.current.upserts.length === 0;
         if (empty && !localStorage.getItem(seededKey(storeId))) {
-          const seeded = createSeedNodes();
+          const seeded = createSeedNodes(storeId);
           localStorage.setItem(seededKey(storeId), '1');
           setNodes(() => seeded);
           for (const n of seeded) enqueue('upserts', n.id);

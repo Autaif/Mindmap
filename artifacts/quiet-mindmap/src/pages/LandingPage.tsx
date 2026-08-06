@@ -1,6 +1,8 @@
 import { motion } from 'framer-motion';
 import { useLocation } from 'wouter';
 import { StarField } from '../components/StarField';
+import { GLASS_NAVY_FILL } from '../lib/glass';
+import { RADIUS_SM, BORDER_W, BORDER_W_EMPHASIS, BORDER_CONTROL, ACCENT_BORDER_STRONG, GLOW_ACCENT, Z } from '../lib/tokens';
 
 export function LandingPage() {
   const [, setLocation] = useLocation();
@@ -23,7 +25,7 @@ export function LandingPage() {
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6 }}
-        style={{ position: 'relative', zIndex: 5, textAlign: 'center', padding: 24, maxWidth: 480 }}
+        style={{ position: 'relative', zIndex: Z.landingContent, textAlign: 'center', padding: 24, maxWidth: 480 }}
       >
         <div
           className="hub-pulse"
@@ -33,7 +35,7 @@ export function LandingPage() {
             margin: '0 auto 26px',
             borderRadius: '50%',
             background: 'radial-gradient(circle at 38% 38%, hsl(262,55%,40%), hsl(228,40%,18%))',
-            border: '1.5px solid rgba(139,92,246,0.5)',
+            border: `${BORDER_W_EMPHASIS}px solid ${ACCENT_BORDER_STRONG}`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -69,14 +71,14 @@ export function LandingPage() {
             onClick={() => setLocation('/sign-in')}
             style={{
               padding: '11px 26px',
-              borderRadius: 10,
+              borderRadius: RADIUS_SM,
               border: 'none',
               background: 'hsl(262,60%,52%)',
               color: '#fff',
               fontSize: 14,
               fontWeight: 700,
               cursor: 'pointer',
-              boxShadow: '0 0 24px rgba(139,92,246,0.35)',
+              boxShadow: GLOW_ACCENT,
             }}
           >
             Sign in
@@ -85,9 +87,9 @@ export function LandingPage() {
             onClick={() => setLocation('/sign-up')}
             style={{
               padding: '11px 26px',
-              borderRadius: 10,
-              border: '1px solid hsl(228,25%,22%)',
-              background: 'rgba(13,15,33,0.7)',
+              borderRadius: RADIUS_SM,
+              border: `${BORDER_W}px solid ${BORDER_CONTROL}`,
+              background: GLASS_NAVY_FILL,
               color: 'hsl(220,15%,70%)',
               fontSize: 14,
               fontWeight: 700,
