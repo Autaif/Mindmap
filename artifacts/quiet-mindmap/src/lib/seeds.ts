@@ -1,6 +1,6 @@
 import type { Attachment, MindNode } from '../types';
 import { persona } from './persona';
-import { DEMO_ACCOUNTS } from './supabase';
+import { roleOf } from './people';
 
 /**
  * Starting content for a map that has never been used.
@@ -152,51 +152,52 @@ const ASSISTANT_ATTACHMENTS: SeedAttachment[] = [
   { id: 'seed-att-fatimah', nodeId: 'seed-fatimah', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
 ];
 
-/** The director's own paperwork — his decisions, not her inbox. */
+/** The director's own paperwork — the evidence behind a decision, not an inbox. */
 const DIRECTOR_ATTACHMENTS: SeedAttachment[] = [
-  { id: 'seed-att-dir-beds', nodeId: 'seed-dir-headcount', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
-  { id: 'seed-att-dir-rota', nodeId: 'seed-dir-headcount', name: 'clinic-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
+  { id: 'seed-att-dir-beds', nodeId: 'seed-dir-jizan-posts', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
+  { id: 'seed-att-dir-rota', nodeId: 'seed-dir-jizan-posts', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
+  { id: 'seed-att-dir-waits', nodeId: 'seed-dir-jizan-posts', name: 'waiting-times-aug.svg', assetUrl: 'demo/waiting-times.svg', mimeType: 'image/svg+xml', size: 6211 },
 
-  { id: 'seed-att-dir-minutes', nodeId: 'seed-dir-allhands', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
+  { id: 'seed-att-dir-referrals', nodeId: 'seed-dir-jizan-expansion', name: 'referral-volumes.svg', assetUrl: 'demo/referral-volumes.svg', mimeType: 'image/svg+xml', size: 4332 },
 
-  { id: 'seed-att-dir-circular', nodeId: 'seed-dir-supplier', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
+  { id: 'seed-att-dir-triage', nodeId: 'seed-dir-triage-model', name: 'intake-triage-draft.svg', assetUrl: 'demo/triage-flow.svg', mimeType: 'image/svg+xml', size: 4543 },
 
-  { id: 'seed-att-dir-incidents', nodeId: 'seed-dir-retention', name: 'incident-summary-q3.svg', assetUrl: 'demo/incident-summary.svg', mimeType: 'image/svg+xml', size: 4094 },
-  { id: 'seed-att-dir-supervision', nodeId: 'seed-dir-retention', name: 'supervision-lines.svg', assetUrl: 'demo/supervision-structure.svg', mimeType: 'image/svg+xml', size: 3409 },
+  { id: 'seed-att-dir-circular', nodeId: 'seed-dir-capacity-return', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
+  { id: 'seed-att-dir-minutes', nodeId: 'seed-dir-capacity-return', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
 ];
 
 /** What sits on the director's map: his own decisions and standing worries. */
 const DIRECTOR_SEEDS: SeedSpec[] = [
   {
-    id: 'seed-dir-headcount',
-    title: 'Psychiatrist headcount for Q1',
-    detail: 'Two consultant posts requested across the region. Acute beds are at capacity, so this needs a decision before the budget closes.',
+    id: 'seed-dir-jizan-posts',
+    title: 'Jizan consultant posts — approve or defer',
+    detail: 'Two permanent posts for Jizan. Beds have been full for nine days and waits are past target. Deferring means another quarter on locums at higher cost.',
     kind: 'urgent',
     owner: 'Me',
     status: 'open',
   },
   {
-    id: 'seed-dir-allhands',
-    title: 'Regional oversight meeting',
-    detail: 'Four items carried over. Wants the supervision question settled rather than deferred again.',
-    kind: 'task',
+    id: 'seed-dir-jizan-expansion',
+    title: 'Jizan service expansion — outline case',
+    detail: 'A second site in the south of the region. Big commitment, but referrals are up 93% and the current site cannot absorb it.',
+    kind: 'idea',
     owner: 'Me',
     status: 'open',
   },
   {
-    id: 'seed-dir-supplier',
-    title: 'Pharmacy supply contract renewal',
-    detail: 'Comes up in six weeks. Ministry reporting requirements changed this cycle.',
-    kind: 'task',
-    owner: 'Procurement',
+    id: 'seed-dir-triage-model',
+    title: 'Adopt triage screening region-wide?',
+    detail: 'If the Jizan pilot holds up, this becomes the model everywhere. Worth deciding early rather than letting each site invent its own.',
+    kind: 'idea',
+    owner: 'Me',
     status: 'open',
   },
   {
-    id: 'seed-dir-retention',
-    title: 'Retention in the outpatient team',
-    detail: 'Two departures this quarter. Worth understanding before it becomes a pattern.',
-    kind: 'concern',
-    owner: 'Outpatient',
+    id: 'seed-dir-capacity-return',
+    title: 'Sign off the Q3 capacity return',
+    detail: 'Goes to the Ministry on the 20th under my name. No extensions this cycle.',
+    kind: 'urgent',
+    owner: 'Me',
     status: 'open',
   },
 ];
@@ -261,9 +262,10 @@ export const DIRECTOR_STORE_ID = 'demo-director';
  * the demo was rehearsed on.
  */
 function personaOfStore(storeId: string): 'assistant' | 'director' | null {
-  if (storeId === ASSISTANT_STORE_ID || storeId === DEMO_ACCOUNTS.assistant) return 'assistant';
-  if (storeId === DIRECTOR_STORE_ID || storeId === DEMO_ACCOUNTS.director) return 'director';
-  return null;
+  if (storeId === ASSISTANT_STORE_ID) return 'assistant';
+  if (storeId === DIRECTOR_STORE_ID) return 'director';
+  // A signed-in account: the role was resolved from its email at sign-in.
+  return roleOf(storeId);
 }
 
 /** Seed set for a given store, chosen by which persona this window is. */

@@ -14,7 +14,7 @@
  */
 
 import { GUEST_STORE_ID } from '../config';
-import { DEMO_ACCOUNTS, DEMO_PEOPLE } from './supabase';
+import { ACCOUNT_IDS, ROLE_NAMES } from './people';
 
 export interface Persona {
   /** Storage id for this persona's own map. */
@@ -29,16 +29,16 @@ export interface Persona {
 // never disagree about who is who.
 const ASSISTANT: Persona = {
   id: 'demo-assistant',
-  name: DEMO_PEOPLE.assistant.name,
+  name: ROLE_NAMES.assistant,
   partnerId: 'demo-director',
-  partnerName: DEMO_PEOPLE.director.name,
+  partnerName: ROLE_NAMES.director,
 };
 
 const DIRECTOR: Persona = {
   id: 'demo-director',
-  name: DEMO_PEOPLE.director.name,
+  name: ROLE_NAMES.director,
   partnerId: 'demo-assistant',
-  partnerName: DEMO_PEOPLE.assistant.name,
+  partnerName: ROLE_NAMES.assistant,
 };
 
 const SOLO: Persona = {
@@ -74,7 +74,7 @@ export function resetDemoStores() {
   // Both routes to a demo map: the signed-out personas and the two real
   // accounts. A reset that cleared only one would leave the other holding
   // whatever was there before.
-  const stores = [ASSISTANT.id, DIRECTOR.id, DEMO_ACCOUNTS.assistant, DEMO_ACCOUNTS.director];
+  const stores = [ASSISTANT.id, DIRECTOR.id, ...ACCOUNT_IDS];
   for (const storeId of stores) {
     for (const prefix of STORE_KEY_PREFIXES) {
       localStorage.removeItem(`${prefix}:${storeId}`);

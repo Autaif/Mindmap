@@ -46,35 +46,14 @@ function windowScope(): string {
 }
 
 /**
- * The two demo people: their accounts and the names shown on screen.
- *
- * **Change a name here and it changes everywhere** — the badge, the Send
- * button, the panel wording and the signed-out personas all read from this one
- * place, so renaming is a one-line edit rather than a hunt.
- *
- * A real product would read pairings from a table; for two people a constant is
- * honest and has no failure mode of its own.
+ * Who each account is lives in `lib/people` — keyed by email and resolved at
+ * sign-in, rather than a hand-written id → person table that can be, and was,
+ * written down backwards.
  */
-export const DEMO_PEOPLE = {
-  assistant: { id: '379898db-aeb8-41ef-8f8b-b47de350f604', name: 'Raghad' },
-  director: { id: 'b494e356-111b-4540-b26e-6c6922cdae82', name: 'Mansour' },
-} as const;
-
-export const DEMO_ACCOUNTS = {
-  assistant: DEMO_PEOPLE.assistant.id,
-  director: DEMO_PEOPLE.director.id,
-} as const;
+export { ACCOUNT_IDS, ROLE_NAMES, roleOf, nameOfAccount, partnerIdOf, resolveIdentity } from './people';
 
 /** The other person's user id, or null for anyone outside the demo pair. */
-export function partnerOf(userId: string | null): string | null {
-  if (userId === DEMO_ACCOUNTS.assistant) return DEMO_ACCOUNTS.director;
-  if (userId === DEMO_ACCOUNTS.director) return DEMO_ACCOUNTS.assistant;
-  return null;
-}
+export { partnerIdOf as partnerOf } from './people';
 
 /** Display name for a user id, for "Send to …" and arrival labels. */
-export function accountName(userId: string | null): string {
-  if (userId === DEMO_PEOPLE.assistant.id) return DEMO_PEOPLE.assistant.name;
-  if (userId === DEMO_PEOPLE.director.id) return DEMO_PEOPLE.director.name;
-  return 'Them';
-}
+export { nameOfAccount as accountName } from './people';

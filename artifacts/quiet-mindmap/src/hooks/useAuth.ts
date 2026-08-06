@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { resolveIdentity } from '../lib/people';
 
 /**
  * Supabase session state, shaped like the Clerk hook it replaces so the call
@@ -54,6 +55,11 @@ export function useUser() {
   const user: AuthUser | null = session?.user
     ? { id: session.user.id, email: session.user.email ?? null }
     : null;
+
+  // Teach the app which account is which, from the one thing a human can
+  // verify. Everything that names a person or picks starting content reads the
+  // result, so this has to happen before any of it renders.
+  if (user) resolveIdentity(user.id, user.email);
 
   return { user, isLoaded, isSignedIn: !!user };
 }
