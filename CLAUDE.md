@@ -126,7 +126,32 @@ zod-4-only `z.int()` for `integer`, but the workspace pins zod 3, so `typecheck:
 immediately after codegen. Round server-side if integer semantics matter. (Full detail in
 `.agents/memory/openapi-codegen-quirks.md`.)
 
-## Auth spans two packages
+## The web app now runs on Supabase, not the API server
+
+`artifacts/quiet-mindmap` talks to **Supabase** directly from the browser for
+accounts, data and file storage. It no longer uses Clerk or `artifacts/api-server`.
+That is what lets it deploy as a static site with no server of its own — it is
+live on Netlify, built from `netlify.toml`.
+
+- **Setup lives in [supabase/setup.sql](supabase/setup.sql)** — tables, every
+  row-level policy, the `return_shared_node` function, the storage bucket and the
+  realtime publication. It is idempotent; re-run it to repair a drifted project.
+- **The policies are the security boundary**, not the client. The anon key is
+  public by design and ships in the bundle; Row Level Security is the only thing
+  separating one account's entries from another's. Never put the `service_role`
+  key anywhere the browser can reach.
+- `src/lib/supabase.ts` (client), `src/lib/nodesTransport.ts` (queries, sharing,
+  storage), `src/hooks/useAuth.ts` (session), `src/lib/people.ts` (who the demo
+  accounts are — keyed by **email**, since a user id cannot be checked by eye and
+  was once written down backwards).
+- `useNodes`'s sync engine is unchanged: only its two transport calls moved.
+
+`artifacts/api-server`, `lib/db`, `lib/api-spec`, `lib/api-client-react` and
+`lib/api-zod` are now unused by the web app. They still build and typecheck, and
+the mobile app still targets them — do not delete them, but do not assume the web
+app goes through them either.
+
+## Auth spans two packages (mobile app only — the web app moved to Supabase)
 
 Clerk keys are resolved by hostname on both sides, not hardcoded, because the app runs on
 Replit preview domains, localhost, and eventually a real domain:
