@@ -182,6 +182,11 @@ export function useMap(canvasWidth: number, canvasHeight: number, storeId: strin
     deleteNode,
     clearAllNodes,
     syncStatus: base.syncStatus,
+    /**
+     * Push queued entries now. Anything that attaches to an entry server-side
+     * needs it to exist first — the attachment policies check for it.
+     */
+    flushNow: base.flushNow,
     // Sharing surface, used only by the panel and the bubble badge.
     sharedIds: effectiveSharedIds,
     sharedAttachments,

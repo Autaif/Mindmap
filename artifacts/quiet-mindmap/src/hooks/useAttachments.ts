@@ -33,6 +33,8 @@ export function useAttachments(storeId: string | null) {
   const onServer = !!accountId;
   const onServerRef = useRef(onServer);
   onServerRef.current = onServer;
+  /** Latest known set, readable from callbacks that must not close over state. */
+  const localOnlyRef = useRef<Attachment[]>([]);
 
   useEffect(() => {
     storeIdRef.current = storeId;
@@ -57,43 +59,64 @@ export function useAttachments(storeId: string | null) {
     }
 
     setAttachments(loaded);
+    localOnlyRef.current = loaded;
 
     // Signed in: publish whatever this account holds locally (the seeded
-    // pictures on a fresh sign-in) and then adopt the server's view, so the
-    // same set is visible from any device and travels with a shared entry.
-    if (onServerRef.current) {
-      void (async () => {
-        try {
-          const remote = await listAttachments();
-          const remoteIds = new Set(remote.map((a) => a.id));
-          const toPublish = loaded.filter((a) => !remoteIds.has(a.id));
-          for (const a of toPublish) await putAttachment(a);
-          const merged = toPublish.length > 0 ? await listAttachments() : remote;
-          setAttachments(merged);
-          if (storeIdRef.current) saveAttachmentMeta(storeIdRef.current, merged);
-        } catch {
-          // Offline or misconfigured: the local copy above still shows.
-        }
-      })();
-    }
+    // pictures on a fresh sign-in) so the same set is visible from any device
+    // and travels with a shared entry.
+    if (onServerRef.current) void publishLocalOnly();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeId]);
 
   const persist = useCallback((next: Attachment[]) => {
     setAttachments(next);
+    localOnlyRef.current = next;
     if (storeIdRef.current) saveAttachmentMeta(storeIdRef.current, next);
+  }, []);
+
+  /**
+   * Push anything held only in this browser up to the database.
+   *
+   * Each row is attempted on its own, because an attachment can legitimately
+   * fail while its entry has not reached the server yet: the insert policy
+   * requires the entry to exist, so it is rejected until the outbound queue has
+   * flushed. Aborting the whole batch on the first such rejection would leave
+   * the rest permanently unpublished. Callers re-run this once sync settles.
+   */
+  const publishLocalOnly = useCallback(async () => {
+    if (!onServerRef.current || !storeIdRef.current) return;
+    try {
+      const remote = await listAttachments();
+      const remoteIds = new Set(remote.map((a) => a.id));
+      const pending = localOnlyRef.current.filter((a) => !remoteIds.has(a.id));
+
+      let published = 0;
+      for (const a of pending) {
+        try {
+          await putAttachment(a);
+          published += 1;
+        } catch {
+          // Its entry is not on the server yet — try again next time.
+        }
+      }
+
+      const merged = published > 0 ? await listAttachments() : remote;
+      // Keep anything still unpublished visible; it exists in this browser even
+      // if the database has not accepted it yet.
+      const mergedIds = new Set(merged.map((a) => a.id));
+      const next = [...merged, ...localOnlyRef.current.filter((a) => !mergedIds.has(a.id))];
+      setAttachments(next);
+      if (storeIdRef.current) saveAttachmentMeta(storeIdRef.current, next);
+    } catch {
+      // Offline or misconfigured: whatever is already on screen stays.
+    }
   }, []);
 
   /** Pull the server's set — used when a shared entry arrives with pictures. */
   const refreshAttachments = useCallback(async () => {
     if (!onServerRef.current || !storeIdRef.current) return;
-    try {
-      const remote = await listAttachments();
-      setAttachments(remote);
-      saveAttachmentMeta(storeIdRef.current, remote);
-    } catch {
-      /* leave the current view in place */
-    }
-  }, []);
+    await publishLocalOnly();
+  }, [publishLocalOnly]);
 
   const addFileAttachment = useCallback(
     async (nodeId: string, file: File) => {

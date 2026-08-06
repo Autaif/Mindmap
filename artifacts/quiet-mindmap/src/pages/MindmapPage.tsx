@@ -34,6 +34,24 @@ import { computePushOffsets, ZERO_PUSH, type RepelPoint } from '../lib/repulsion
 
 const EMPTY_ATTACHMENTS: Attachment[] = [];
 
+/**
+ * Turn a storage/database rejection into something actionable. A bare "new row
+ * violates row-level security policy" tells the person nothing about which of
+ * several setup steps is missing.
+ */
+function explainAttachmentError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const m = raw.toLowerCase();
+  if (m.includes('row-level security') || m.includes('violates')) {
+    return 'The server refused the upload. The attachments bucket may be missing its access policies.';
+  }
+  if (m.includes('bucket') && m.includes('not found')) {
+    return 'No attachments bucket exists on the server yet.';
+  }
+  if (m.includes('failed to fetch')) return 'Could not reach the server — check the connection.';
+  return raw || 'Could not add that file';
+}
+
 const DISMISS_KEY = 'quiet-mindmap-seed-notice-dismissed';
 
 const SYNC_LABEL: Record<SyncStatus, string> = {
@@ -529,6 +547,7 @@ export function MindmapPage() {
     deleteNode,
     clearAllNodes,
     syncStatus,
+    flushNow,
     sharedIds,
     sharedAttachments,
     shareInfo,
@@ -1041,16 +1060,27 @@ export function MindmapPage() {
     (nodeId: string, files: FileList) => {
       setAttachmentError(null);
       void (async () => {
+        // The entry has to exist server-side before anything can be attached to
+        // it — that is what the attachment policy checks. A seeded entry, or one
+        // typed moments ago, may still be sitting in the outbound queue.
+        if (user) {
+          try {
+            await flushNow();
+          } catch {
+            // Push failed; the upload below will report the real problem.
+          }
+        }
+
         for (const file of Array.from(files)) {
           try {
             await addFileAttachment(nodeId, file);
           } catch (err) {
-            setAttachmentError(err instanceof Error ? err.message : 'Could not add that file');
+            setAttachmentError(explainAttachmentError(err));
           }
         }
       })();
     },
-    [addFileAttachment],
+    [addFileAttachment, user, flushNow],
   );
 
   const handleAddAttachmentLink = useCallback(
@@ -1070,6 +1100,16 @@ export function MindmapPage() {
     if (!user) return;
     void refreshAttachments();
   }, [user, sharedIds, refreshAttachments]);
+
+  /**
+   * Once the entries have landed server-side, retry any attachment that was
+   * rejected for referring to an entry that did not exist yet. On a fresh
+   * sign-in the seeded pictures and their entries race, and the pictures lose.
+   */
+  useEffect(() => {
+    if (!user || syncStatus !== 'synced') return;
+    void refreshAttachments();
+  }, [user, syncStatus, refreshAttachments]);
 
   // A picture attached *after* an item was sent must still reach the other
   // person, so the shared record's attachment list tracks the owner's own.

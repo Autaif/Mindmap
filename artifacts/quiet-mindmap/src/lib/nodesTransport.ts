@@ -272,13 +272,27 @@ export async function putAttachment(attachment: Attachment, file?: File): Promis
 
   if (file) {
     // Namespaced by uploader so one person's upload can never overwrite
-    // another's, whatever the file happens to be called.
-    storagePath = `${userId}/${attachment.id}-${file.name}`;
+    // another's, whatever the file happens to be called. The storage policy
+    // matches on this `<user id>/` prefix, so the shape here is load-bearing.
+    // Punctuation in a filename has broken object keys before, so it is
+    // reduced to something unambiguous rather than passed through.
+    const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+    storagePath = `${userId}/${attachment.id}-${safeName}`;
     const { error } = await client.storage.from(BUCKET).upload(storagePath, file, {
       contentType: file.type || undefined,
-      upsert: true,
+      // Not an upsert. The key already contains a freshly generated attachment
+      // id, so it cannot collide — and an upsert makes Storage look the object
+      // up first, which drags the read policy into what should be a plain
+      // write and fails before the file is ever stored.
+      upsert: false,
     });
-    if (error) throw error;
+    if (error) {
+      // Storage reports a policy refusal as a plain 400, which tells the
+      // person nothing. Keep the original text on the console for diagnosis
+      // while the UI shows something readable.
+      console.error('[attachments] upload refused', { storagePath, error });
+      throw error;
+    }
   }
 
   const { error } = await client.from('attachments').upsert(
@@ -297,7 +311,10 @@ export async function putAttachment(attachment: Attachment, file?: File): Promis
     },
     { onConflict: 'id' },
   );
-  if (error) throw error;
+  if (error) {
+    console.error('[attachments] record refused', { nodeId: attachment.nodeId, error });
+    throw error;
+  }
 
   return { ...attachment, storagePath: storagePath ?? undefined };
 }
