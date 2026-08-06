@@ -1,5 +1,6 @@
 import type { Attachment, MindNode } from '../types';
 import { persona } from './persona';
+import { DEMO_ACCOUNTS } from './supabase';
 
 /**
  * Starting content for a map that has never been used.
@@ -76,6 +77,38 @@ const ASSISTANT_SEEDS: SeedSpec[] = [
     owner: 'Khalid',
     status: 'open',
   },
+  {
+    id: 'seed-jizan-beds',
+    title: 'Jizan inpatient beds at capacity',
+    detail: 'Acute admissions have been full for nine days. The escalation policy starts at 95% and we are at 94%.',
+    kind: 'urgent',
+    owner: 'Jizan clinic',
+    status: 'open',
+  },
+  {
+    id: 'seed-jizan-transport',
+    title: 'Jizan patient transport gaps',
+    detail: 'Two outlying centres have no transport cover on Thursdays. Families are being asked to travel at their own cost.',
+    kind: 'concern',
+    owner: 'Nouf',
+    status: 'open',
+  },
+  {
+    id: 'seed-jizan-clinic-hours',
+    title: 'Extend Jizan evening clinic',
+    detail: 'Abdulrahman suggests a Tuesday evening slot to cut the wait for working patients. Needs a room and one registrar.',
+    kind: 'idea',
+    owner: 'Abdulrahman',
+    status: 'open',
+  },
+  {
+    id: 'seed-fatimah',
+    title: 'Fatimah — records handover',
+    detail: 'Taking over the outpatient records from next month. Wants the reporting template agreed before she starts.',
+    kind: 'task',
+    owner: 'Fatimah',
+    status: 'handled',
+  },
 ];
 
 /**
@@ -107,6 +140,16 @@ const ASSISTANT_ATTACHMENTS: SeedAttachment[] = [
 
   { id: 'seed-att-roadmap', nodeId: 'seed-roadmap', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
   { id: 'seed-att-roadmap-2', nodeId: 'seed-roadmap', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
+
+  { id: 'seed-att-beds', nodeId: 'seed-jizan-beds', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
+  { id: 'seed-att-beds-2', nodeId: 'seed-jizan-beds', name: 'incident-summary-q3.svg', assetUrl: 'demo/incident-summary.svg', mimeType: 'image/svg+xml', size: 4094 },
+
+  { id: 'seed-att-transport', nodeId: 'seed-jizan-transport', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
+
+  { id: 'seed-att-hours', nodeId: 'seed-jizan-clinic-hours', name: 'waiting-times-aug.svg', assetUrl: 'demo/waiting-times.svg', mimeType: 'image/svg+xml', size: 6211 },
+  { id: 'seed-att-hours-2', nodeId: 'seed-jizan-clinic-hours', name: 'referral-volumes.svg', assetUrl: 'demo/referral-volumes.svg', mimeType: 'image/svg+xml', size: 4332 },
+
+  { id: 'seed-att-fatimah', nodeId: 'seed-fatimah', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
 ];
 
 /** The director's own paperwork — his decisions, not her inbox. */
@@ -172,11 +215,11 @@ const SOLO_SEEDS: SeedSpec[] = [
     ],
   },
   {
-    id: 'seed-solo-ana',
-    title: 'New workflow proposal from Ana',
-    detail: 'Ana wants to restructure onboarding. She has a draft doc — promising, needs my sign-off.',
+    id: 'seed-solo-raghad',
+    title: 'New workflow proposal from Raghad',
+    detail: 'Raghad wants to restructure onboarding. She has a draft doc — promising, needs my sign-off.',
     kind: 'idea',
-    owner: 'Ana',
+    owner: 'Raghad',
     status: 'open',
   },
   {
@@ -199,11 +242,11 @@ const SOLO_SEEDS: SeedSpec[] = [
     status: 'open',
   },
   {
-    id: 'seed-solo-carlos',
-    title: 'Carlos needs clearer role definition',
+    id: 'seed-solo-khalid',
+    title: 'Khalid needs clearer role definition',
     detail: 'He mentioned feeling uncertain about scope in two meetings. Not critical yet, but worth addressing.',
     kind: 'concern',
-    owner: 'Carlos',
+    owner: 'Khalid',
     status: 'open',
   },
 ];
@@ -211,10 +254,23 @@ const SOLO_SEEDS: SeedSpec[] = [
 export const ASSISTANT_STORE_ID = 'demo-assistant';
 export const DIRECTOR_STORE_ID = 'demo-director';
 
+/**
+ * Which demo persona a store belongs to, whether it is a signed-out window
+ * running `?as=assistant` or the real Supabase account for the same person.
+ * Both routes must land on the same content, or signing in would empty the map
+ * the demo was rehearsed on.
+ */
+function personaOfStore(storeId: string): 'assistant' | 'director' | null {
+  if (storeId === ASSISTANT_STORE_ID || storeId === DEMO_ACCOUNTS.assistant) return 'assistant';
+  if (storeId === DIRECTOR_STORE_ID || storeId === DEMO_ACCOUNTS.director) return 'director';
+  return null;
+}
+
 /** Seed set for a given store, chosen by which persona this window is. */
 export function seedsFor(storeId: string): SeedSpec[] {
-  if (storeId === ASSISTANT_STORE_ID) return ASSISTANT_SEEDS;
-  if (storeId === DIRECTOR_STORE_ID) return DIRECTOR_SEEDS;
+  const who = personaOfStore(storeId);
+  if (who === 'assistant') return ASSISTANT_SEEDS;
+  if (who === 'director') return DIRECTOR_SEEDS;
   return SOLO_SEEDS;
 }
 
@@ -224,12 +280,8 @@ export function seedsFor(storeId: string): SeedSpec[] {
  * browser or a deployed build.
  */
 export function seedAttachmentsFor(storeId: string): Attachment[] {
-  const specs =
-    storeId === ASSISTANT_STORE_ID
-      ? ASSISTANT_ATTACHMENTS
-      : storeId === DIRECTOR_STORE_ID
-        ? DIRECTOR_ATTACHMENTS
-        : [];
+  const who = personaOfStore(storeId);
+  const specs = who === 'assistant' ? ASSISTANT_ATTACHMENTS : who === 'director' ? DIRECTOR_ATTACHMENTS : [];
   const now = new Date().toISOString();
   return specs.map((s) => ({
     id: s.id,

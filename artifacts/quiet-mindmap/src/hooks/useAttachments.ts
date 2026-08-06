@@ -10,6 +10,8 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from '../lib/attachmentStore';
 import { seedAttachmentsFor } from '../lib/seeds';
+import { useUser } from './useAuth';
+import { listAttachments, putAttachment, removeAttachmentRow } from '../lib/nodesTransport';
 
 const attachmentsSeededKey = (storeId: string) => `quiet-mindmap-attachments-seeded:${storeId}`;
 
@@ -21,6 +23,16 @@ const attachmentsSeededKey = (storeId: string) => `quiet-mindmap-attachments-see
 export function useAttachments(storeId: string | null) {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const storeIdRef = useRef(storeId);
+  const { user } = useUser();
+  const accountId = user?.id ?? null;
+  /**
+   * Signed in, attachments live in the database so they travel with a shared
+   * entry. Signed out, they stay in this browser. The two are never mixed: a
+   * store id is either an account or a local persona, never both.
+   */
+  const onServer = !!accountId;
+  const onServerRef = useRef(onServer);
+  onServerRef.current = onServer;
 
   useEffect(() => {
     storeIdRef.current = storeId;
@@ -45,11 +57,42 @@ export function useAttachments(storeId: string | null) {
     }
 
     setAttachments(loaded);
+
+    // Signed in: publish whatever this account holds locally (the seeded
+    // pictures on a fresh sign-in) and then adopt the server's view, so the
+    // same set is visible from any device and travels with a shared entry.
+    if (onServerRef.current) {
+      void (async () => {
+        try {
+          const remote = await listAttachments();
+          const remoteIds = new Set(remote.map((a) => a.id));
+          const toPublish = loaded.filter((a) => !remoteIds.has(a.id));
+          for (const a of toPublish) await putAttachment(a);
+          const merged = toPublish.length > 0 ? await listAttachments() : remote;
+          setAttachments(merged);
+          if (storeIdRef.current) saveAttachmentMeta(storeIdRef.current, merged);
+        } catch {
+          // Offline or misconfigured: the local copy above still shows.
+        }
+      })();
+    }
   }, [storeId]);
 
   const persist = useCallback((next: Attachment[]) => {
     setAttachments(next);
     if (storeIdRef.current) saveAttachmentMeta(storeIdRef.current, next);
+  }, []);
+
+  /** Pull the server's set — used when a shared entry arrives with pictures. */
+  const refreshAttachments = useCallback(async () => {
+    if (!onServerRef.current || !storeIdRef.current) return;
+    try {
+      const remote = await listAttachments();
+      setAttachments(remote);
+      saveAttachmentMeta(storeIdRef.current, remote);
+    } catch {
+      /* leave the current view in place */
+    }
   }, []);
 
   const addFileAttachment = useCallback(
@@ -59,8 +102,10 @@ export function useAttachments(storeId: string | null) {
         throw new Error(`"${file.name}" is larger than ${Math.round(MAX_ATTACHMENT_BYTES / 1024 / 1024)}MB`);
       }
       const id = makeAttachmentId();
+      // Always keep a local copy: it makes the thumbnail appear immediately and
+      // keeps the picture readable if the upload or the network fails.
       await putBlob(id, file);
-      const attachment: Attachment = {
+      let attachment: Attachment = {
         id,
         nodeId,
         kind: kindForFile(file),
@@ -69,6 +114,13 @@ export function useAttachments(storeId: string | null) {
         size: file.size,
         createdAt: new Date().toISOString(),
       };
+
+      if (onServerRef.current) {
+        // Uploading is what lets the other person see it at all, so a failure
+        // here is worth surfacing rather than silently leaving a local-only file.
+        attachment = await putAttachment(attachment, file);
+      }
+
       persist([...attachments, attachment]);
       return attachment;
     },
@@ -86,6 +138,7 @@ export function useAttachments(storeId: string | null) {
         createdAt: new Date().toISOString(),
       };
       persist([...attachments, attachment]);
+      if (onServerRef.current) void putAttachment(attachment);
       return attachment;
     },
     [attachments, persist],
@@ -98,6 +151,7 @@ export function useAttachments(storeId: string | null) {
       // Links have no bytes, and seeded pictures are files served by the app —
       // neither has anything in IndexedDB to remove.
       if (target && target.kind !== 'link' && !target.assetUrl) void deleteBlob(id);
+      if (target && onServerRef.current) void removeAttachmentRow(target);
     },
     [attachments, persist],
   );
@@ -109,6 +163,7 @@ export function useAttachments(storeId: string | null) {
       persist(attachments.filter((a) => a.nodeId !== nodeId));
       for (const a of toRemove) {
         if (a.kind !== 'link' && !a.assetUrl) void deleteBlob(a.id);
+        if (onServerRef.current) void removeAttachmentRow(a);
       }
     },
     [attachments, persist],
@@ -126,5 +181,6 @@ export function useAttachments(storeId: string | null) {
     removeAttachment,
     removeAttachmentsForNode,
     getAttachmentsForNode,
+    refreshAttachments,
   };
 }

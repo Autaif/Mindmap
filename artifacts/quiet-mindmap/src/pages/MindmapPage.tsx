@@ -9,7 +9,7 @@ import { FilterBar } from '../components/FilterBar';
 import { DigestPanel, getStaleOpenNodes, useWeeklyDigestNotification } from '../components/DigestPanel';
 import { ListPanel, LIST_PANEL_SPACE } from '../components/ListPanel';
 import { ZoomControls } from '../components/ZoomControls';
-import { useClerk, useUser } from '@clerk/react';
+import { useUser, useAuthActions } from '../hooks/useAuth';
 import { useLocation } from 'wouter';
 import { type SyncStatus } from '../hooks/useNodes';
 import { useMap } from '../hooks/useMap';
@@ -20,6 +20,7 @@ import { useOrbs } from '../hooks/useOrbs';
 import type { Attachment, MindNode, NodeKind, NodeStatus, Orb, Viewport } from '../types';
 import { KIND_META, clampScale, kindTint } from '../types';
 import { guestStoreId, persona, isPersonaMode, personaNameFor } from '../lib/persona';
+import { partnerOf, accountName } from '../lib/supabase';
 import { glassSurface } from '../lib/glass';
 import {
   RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_XS, RADIUS_PILL, BORDER_W, BORDER_W_EMPHASIS, BORDER_CONTROL, SHADOW_FLOAT,
@@ -83,7 +84,7 @@ function PrivacyBadge({ status }: { status: SyncStatus }) {
  * two windows are indistinguishable at a glance, which is precisely the thing
  * the demo needs to make obvious.
  */
-function PersonaBadge() {
+function PersonaBadge({ label }: { label: string }) {
   const prefs = useMotionPrefs();
   return (
     <motion.div
@@ -119,7 +120,7 @@ function PersonaBadge() {
           boxShadow: dotGlow('hsl(262,60%,65%)'),
         }}
       />
-      {persona.name}
+      {label}
     </motion.div>
   );
 }
@@ -129,7 +130,7 @@ function PersonaBadge() {
  * synced map — the only route to it once the sign-in wall is off.
  */
 function AccountButton() {
-  const { signOut } = useClerk();
+  const { signOut } = useAuthActions();
   const { isSignedIn } = useUser();
   const [, setLocation] = useLocation();
   const prefs = useMotionPrefs();
@@ -139,9 +140,10 @@ function AccountButton() {
   return (
     <button
       type="button"
-      onClick={() =>
-        signedIn ? signOut({ redirectUrl: import.meta.env.BASE_URL || '/' }) : setLocation('/sign-in')
-      }
+      onClick={() => {
+        if (signedIn) void signOut();
+        else setLocation('/sign-in');
+      }}
       style={{
         // Bottom-left is the only free corner: the filter bar owns the top row,
         // the zoom controls the bottom-right, the privacy badge the centre.
@@ -449,7 +451,8 @@ function NodeDetail({
         )}
 
         {/* The demo's headline move, so it sits one click from the map rather
-            than behind Edit. Absent for an entry that has already been sent. */}
+            than behind Edit. Both people get the same controls: send what is
+            yours, hand back what is not. */}
         {share && !share.isShared && (
           <button
             onClick={share.onSend}
@@ -459,6 +462,19 @@ function NodeDetail({
               <path d="M1.5 6h8M6.5 2.5L10 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             Send to {share.partnerName}
+          </button>
+        )}
+
+        {share && share.isShared && (
+          <button
+            onClick={share.isOwner ? share.onTakeBack : share.onReturn}
+            title={share.isOwner ? 'Take it off their map' : 'Hand it back to them'}
+            style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,55%)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M10.5 6h-8M5.5 2.5L2 6l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {share.isOwner ? 'Take it back' : `Return to ${share.partnerName}`}
           </button>
         )}
 
@@ -519,6 +535,7 @@ export function MindmapPage() {
     shareNode,
     syncSharedAttachments,
     unshareNode,
+    returnNode,
     isOwnerOf,
   } = useMap(dimensions.w, dimensions.h, localStoreId);
   const {
@@ -527,6 +544,7 @@ export function MindmapPage() {
     addLinkAttachment,
     removeAttachment,
     removeAttachmentsForNode,
+    refreshAttachments,
   } = useAttachments(localStoreId);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
 
@@ -707,6 +725,16 @@ export function MindmapPage() {
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
 
+  /**
+   * Whose map this window shows — the signed-in account if there is one,
+   * otherwise the `?as=` persona. Absent for an ordinary single map, where
+   * naming the only person on screen would be noise.
+   */
+  const demoBadgeLabel = useMemo(() => {
+    if (user && partnerOf(user.id)) return accountName(user.id);
+    return isPersonaMode ? persona.name : null;
+  }, [user]);
+
   /** An item the other person sent is theirs to remove, not ours. */
   const canDeleteNode = useCallback(
     (id: string) => !sharedIds.has(id) || isOwnerOf(id),
@@ -726,23 +754,35 @@ export function MindmapPage() {
    * persona mode, which is what keeps the single-map experience unchanged.
    */
   const sharePanelProps = useMemo<SharePanelProps | null>(() => {
-    const partnerId = persona.partnerId;
-    if (!isPersonaMode || !partnerId || !selectedId) return null;
+    // Signed in: the partner comes from the account pairing. Signed out: from
+    // the `?as=` persona. Either route gives the same control.
+    const partnerId = user ? partnerOf(user.id) : isPersonaMode ? persona.partnerId : null;
+    if (!partnerId || !selectedId) return null;
+
     const shared = sharedIds.has(selectedId);
     const owner = isOwnerOf(selectedId);
+    const nameOf = user ? accountName : personaNameFor;
+
+    // When it arrived from the other person, name whoever sent it rather than
+    // "the partner" in the abstract.
+    const senderId = user
+      ? (nodes.find((n) => n.id === selectedId)?.ownerId ?? partnerId)
+      : (shareInfo.get(selectedId)?.ownerId ?? partnerId);
+
     return {
-      // When it arrived from the other person, name whoever sent it rather
-      // than "the partner" in the abstract.
-      partnerName:
-        shared && !owner
-          ? personaNameFor(shareInfo.get(selectedId)?.ownerId ?? partnerId)
-          : (persona.partnerName ?? 'them'),
+      partnerName: shared && !owner ? nameOf(senderId) : nameOf(partnerId),
       isShared: shared,
       isOwner: owner,
       onSend: () => shareNode(selectedId, partnerId, attachmentsByNode.get(selectedId) ?? []),
       onTakeBack: () => unshareNode(selectedId),
+      onReturn: () => {
+        returnNode(selectedId);
+        // It is about to leave this map, so nothing should stay selected.
+        setSelectedId(null);
+        setPanelMode(null);
+      },
     };
-  }, [selectedId, sharedIds, shareInfo, isOwnerOf, shareNode, unshareNode, attachmentsByNode]);
+  }, [user, nodes, selectedId, sharedIds, shareInfo, isOwnerOf, shareNode, unshareNode, returnNode, attachmentsByNode]);
   const selectedParent = selectedNode?.parentId ? nodes.find((n) => n.id === selectedNode.parentId) ?? null : null;
 
   const childCounts = useMemo(() => {
@@ -1020,6 +1060,16 @@ export function MindmapPage() {
     },
     [addLinkAttachment],
   );
+
+  /**
+   * When the set of shared entries changes — one arrives, or is returned — pull
+   * the attachment list again. The pictures belong to the entry, not to this
+   * account, so they only become visible once the entry is.
+   */
+  useEffect(() => {
+    if (!user) return;
+    void refreshAttachments();
+  }, [user, sharedIds, refreshAttachments]);
 
   // A picture attached *after* an item was sent must still reach the other
   // person, so the shared record's attachment list tracks the owner's own.
@@ -1352,7 +1402,7 @@ export function MindmapPage() {
         onReset={fitView}
       />
 
-      {isPersonaMode && <PersonaBadge />}
+      {demoBadgeLabel && <PersonaBadge label={demoBadgeLabel} />}
       <PrivacyBadge status={syncStatus} />
       <AccountButton />
     </div>

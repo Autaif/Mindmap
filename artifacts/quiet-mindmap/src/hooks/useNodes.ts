@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useUser } from '@clerk/react';
-import { listNodes, syncNodes } from '@workspace/api-client-react';
-import type { MindNode as ApiMindNode } from '@workspace/api-client-react';
+import { useUser } from './useAuth';
+import { listNodes, syncNodes, subscribeToNodes } from '../lib/nodesTransport';
 import type { MindNode, NodeKind } from '../types';
 import { guestStoreId } from '../lib/persona';
 import { seedsFor } from '../lib/seeds';
@@ -236,7 +235,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       .filter((n): n is MindNode => !!n);
 
     try {
-      const merged = await syncNodes({ upserts: upserts as ApiMindNode[], deletes: deleteIds });
+      const merged = await syncNodes({ upserts, deletes: deleteIds });
       // Remove only what we actually flushed; edits made mid-flight stay queued.
       const pNow = pendingRef.current;
       pNow.upserts = pNow.upserts.filter(
@@ -244,7 +243,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       );
       pNow.deletes = pNow.deletes.filter((id) => !deleteIds.includes(id));
       savePending();
-      setNodes((prev) => mergeServer(merged as MindNode[], prev, pendingRef.current));
+      setNodes((prev) => mergeServer(merged, prev, pendingRef.current));
       setSyncStatus(
         pendingRef.current.upserts.length || pendingRef.current.deletes.length ? 'syncing' : 'synced',
       );
@@ -320,7 +319,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       try {
         const server = await listNodes();
         if (cancelled) return;
-        setNodes((prev) => mergeServer(server as MindNode[], prev, pendingRef.current));
+        setNodes((prev) => mergeServer(server, prev, pendingRef.current));
 
         const empty =
           server.length === 0 &&
@@ -469,5 +468,53 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     scheduleFlush();
   }, [setNodes, userId, enqueue, scheduleFlush]);
 
-  return { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes, syncStatus };
+  /**
+   * Pull the server's view and merge it in. Used by the realtime subscription
+   * below, and after a share, where the change was made by a call that bypassed
+   * the outbound queue.
+   */
+  const refresh = useCallback(async () => {
+    if (isGuest || !storeId) return;
+    const mine = epoch.current;
+    try {
+      const server = await listNodes();
+      if (epoch.current !== mine) return; // identity changed mid-flight
+      setNodes((prev) => mergeServer(server, prev, pendingRef.current));
+      setSyncStatus('synced');
+    } catch {
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    }
+  }, [isGuest, storeId, setNodes]);
+
+  /** Push anything queued right now, rather than waiting out the debounce. */
+  const flushNow = useCallback(async () => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    await flush();
+  }, [flush]);
+
+  /**
+   * Live updates from the other account. Without this an entry sent to you
+   * would only appear on the next reload, which is precisely the moment the
+   * demo is built around.
+   */
+  useEffect(() => {
+    if (isGuest || !storeId || !ready) return;
+    return subscribeToNodes(() => void refresh());
+  }, [isGuest, storeId, ready, refresh]);
+
+  return {
+    nodes,
+    addNode,
+    updateNode,
+    moveNodeLive,
+    commitPositions,
+    deleteNode,
+    clearAllNodes,
+    syncStatus,
+    refresh,
+    flushNow,
+  };
 }

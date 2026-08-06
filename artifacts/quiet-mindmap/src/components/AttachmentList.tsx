@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Attachment } from '../types';
 import { getBlob, ATTACHMENT_ACCEPT } from '../lib/attachmentStore';
+import { signedUrlFor } from '../lib/nodesTransport';
 import { glassSurface, GLASS_VEIL } from '../lib/glass';
 import { RADIUS_SM, RADIUS_XS, BORDER_W_EMPHASIS, BORDER_CONTROL, ACCENT_BG } from '../lib/tokens';
 import { hoverStyle } from '../lib/hover';
@@ -29,16 +30,30 @@ export function useObjectUrl(attachment: Attachment) {
     }
     let cancelled = false;
     let created: string | null = null;
-    void getBlob(attachment.id).then((blob) => {
-      if (cancelled || !blob) return;
-      created = URL.createObjectURL(blob);
-      setUrl(created);
-    });
+
+    void (async () => {
+      // This browser's own copy first: instant, and it is the only source for
+      // anything uploaded while signed out.
+      const blob = await getBlob(attachment.id);
+      if (cancelled) return;
+      if (blob) {
+        created = URL.createObjectURL(blob);
+        setUrl(created);
+        return;
+      }
+      // No local bytes — an attachment that arrived with a shared entry. Fetch
+      // a short-lived signed URL rather than making the bucket public.
+      if (attachment.storagePath) {
+        const signed = await signedUrlFor(attachment.storagePath);
+        if (!cancelled && signed) setUrl(signed);
+      }
+    })();
+
     return () => {
       cancelled = true;
       if (created) URL.revokeObjectURL(created);
     };
-  }, [attachment.id, attachment.kind, attachment.assetUrl]);
+  }, [attachment.id, attachment.kind, attachment.assetUrl, attachment.storagePath]);
 
   return url;
 }

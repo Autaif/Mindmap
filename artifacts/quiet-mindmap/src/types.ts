@@ -27,6 +27,12 @@ export interface Attachment {
    * anything in this browser's IndexedDB.
    */
   assetUrl?: string;
+  /**
+   * Where the bytes live in Supabase Storage, for anything a person uploaded
+   * while signed in. Absent for signed-out attachments (bytes are in this
+   * browser's IndexedDB) and for the seeded pictures (files the app serves).
+   */
+  storagePath?: string;
   createdAt: string;
 }
 
@@ -43,6 +49,13 @@ export interface MindNode {
   /** World-space coordinates. The focus orb sits at world origin (0, 0). */
   x: number;
   y: number;
+  /**
+   * Who owns this entry, and who it has been sent to. Present only on entries
+   * that came from the server — the signed-out map has no concept of accounts,
+   * and its own sharing is tracked separately in `lib/shareStore`.
+   */
+  ownerId?: string;
+  sharedWith?: string | null;
 }
 
 export interface Viewport {

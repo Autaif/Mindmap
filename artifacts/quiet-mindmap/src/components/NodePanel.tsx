@@ -38,6 +38,8 @@ export interface SharePanelProps {
   isOwner: boolean;
   onSend: () => void;
   onTakeBack: () => void;
+  /** Recipient's counterpart to take-back — hands it back to the sender. */
+  onReturn: () => void;
 }
 
 const KINDS: NodeKind[] = ['urgent', 'concern', 'idea', 'task'];
@@ -348,29 +350,27 @@ export function NodePanel({
                         <p style={{ margin: 0, fontSize: '12px', lineHeight: 1.5, color: 'hsl(220,15%,62%)', fontWeight: 500 }}>
                           {share.isOwner
                             ? `On ${share.partnerName}'s map too. Changes either of you make show on both.`
-                            : `Sent to you by ${share.partnerName}. Marking it handled tells them.`}
+                            : `Sent to you by ${share.partnerName}. Marking it handled tells them — or hand it back if it is not yours to action.`}
                         </p>
-                        {share.isOwner && (
-                          <button
-                            type="button"
-                            onClick={share.onTakeBack}
-                            style={{
-                              alignSelf: 'flex-start',
-                              padding: '7px 12px',
-                              borderRadius: RADIUS_SM,
-                              border: `${BORDER_W}px solid ${BORDER_CONTROL}`,
-                              background: 'transparent',
-                              color: 'hsl(220,15%,58%)',
-                              fontSize: '12px',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              transition: T_CONTROL,
-                            }}
-                            {...takeBackHover}
-                          >
-                            Take it back
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={share.isOwner ? share.onTakeBack : share.onReturn}
+                          style={{
+                            alignSelf: 'flex-start',
+                            padding: '7px 12px',
+                            borderRadius: RADIUS_SM,
+                            border: `${BORDER_W}px solid ${BORDER_CONTROL}`,
+                            background: 'transparent',
+                            color: 'hsl(220,15%,58%)',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            transition: T_CONTROL,
+                          }}
+                          {...takeBackHover}
+                        >
+                          {share.isOwner ? 'Take it back' : `Return to ${share.partnerName}`}
+                        </button>
                       </div>
                     )}
                   </div>

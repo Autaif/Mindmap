@@ -79,6 +79,18 @@ export function useShare(storeId: string | null) {
   const sharedIds = useMemo(() => new Set(sharedNodes.map((n) => n.id)), [sharedNodes]);
 
   /**
+   * Records still in someone else's hands. Distinct from `sharedIds`, which is
+   * everything the share layer owns and therefore everything whose edits must
+   * be routed there — a returned entry is still one of those, but it should no
+   * longer be badged as shared.
+   */
+  const activeShareIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of Object.values(map)) if (r.sharedWith) ids.add(r.id);
+    return ids;
+  }, [map]);
+
+  /**
    * Attachments belonging to shared items. The recipient has no record of these
    * in their own store, so this is the only place they come from.
    */
@@ -140,6 +152,21 @@ export function useShare(storeId: string | null) {
       const next = { ...mapRef.current };
       delete next[id];
       commit(next);
+    },
+    [commit],
+  );
+
+  /**
+   * Hand it back to whoever sent it. The record is kept and only its recipient
+   * is cleared, so everything either of them changed while it was shared stays
+   * on the sender's copy — deleting the record instead would silently revert it
+   * to whatever it said before the send.
+   */
+  const returnNode = useCallback(
+    (id: string) => {
+      const record = mapRef.current[id];
+      if (!record) return;
+      commit({ ...mapRef.current, [id]: { ...record, sharedWith: '' } });
     },
     [commit],
   );
@@ -220,11 +247,13 @@ export function useShare(storeId: string | null) {
   return {
     sharedNodes,
     sharedIds,
+    activeShareIds,
     sharedAttachments,
     shareInfo,
     shareNode,
     syncSharedAttachments,
     unshareNode,
+    returnNode,
     isShared,
     updateSharedNode,
     moveSharedLive,
