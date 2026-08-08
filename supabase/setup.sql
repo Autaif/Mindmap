@@ -220,6 +220,16 @@ create policy "read attachments on visible entries" on storage.objects
 
 -- ------------------------------------------------------------- realtime -----
 
+-- Realtime decides who may hear about a change by running the select policies
+-- above against the row as it appears in the write-ahead log. By default a
+-- delete writes only the primary key there, so `user_id` and `shared_with` are
+-- not present, neither arm of the policy can be evaluated, and the event is
+-- dropped for everyone — the other person's map keeps showing an entry that no
+-- longer exists until they reload. Logging the whole row is what makes a
+-- deletion travel.
+alter table nodes       replica identity full;
+alter table attachments replica identity full;
+
 -- What makes a sent entry appear on the other person's screen without a
 -- reload. Guarded because adding a table twice is an error.
 do $$

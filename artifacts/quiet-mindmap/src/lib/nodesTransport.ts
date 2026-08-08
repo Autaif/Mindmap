@@ -85,7 +85,11 @@ export async function listNodes(): Promise<MindNode[]> {
   const userId = await currentUserId();
 
   const [nodes, positions] = await Promise.all([
-    client.from('nodes').select('*'),
+    // Ordered because this now runs on every change and on a timer, and an
+    // unordered select may hand back the same rows in a different order each
+    // time. That alone would rebuild the whole map and reshuffle which bubble
+    // paints on top of which.
+    client.from('nodes').select('*').order('created_at').order('id'),
     client.from('node_positions').select('node_id, x, y').eq('user_id', userId),
   ]);
 
@@ -349,7 +353,24 @@ export function subscribeToNodes(onChange: () => void): () => void {
     // and a client-side filter could not be trusted anyway.
     .on('postgres_changes', { event: '*', schema: 'public', table: 'nodes' }, onChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'attachments' }, onChange)
-    .subscribe();
+    .subscribe((status, err) => {
+      // Every join has a gap behind it: anything that changed before the
+      // channel was up produced no event for this client. That includes the
+      // rejoin after a dropped socket — a slept laptop or a throttled
+      // background tab — which is exactly when the most has been missed. So
+      // pull on each successful join, not only the first.
+      if (status === 'SUBSCRIBED') {
+        onChange();
+        return;
+      }
+      // A channel that never joins fails silently: entries still arrive, just
+      // late, off the periodic pull instead — which reads as "the app is slow"
+      // rather than "realtime is off". The usual cause is the table missing
+      // from the `supabase_realtime` publication, which supabase/setup.sql adds.
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        console.warn(`[realtime] nodes channel ${status} — falling back to periodic refresh`, err);
+      }
+    });
 
   return () => {
     void client.removeChannel(channel);

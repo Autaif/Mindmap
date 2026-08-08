@@ -34,7 +34,7 @@ const ASSISTANT_SEEDS: SeedSpec[] = [
   {
     id: 'seed-jizan',
     title: 'Jizan',
-    detail: 'Jizan clinic is running three uncovered consultant sessions a week, and waits have gone past the six-week target. Escalated by the clinic manager this morning.',
+    detail: 'Jizan clinic is running three uncovered consultant sessions a week, and waits have gone past the six-week target. Acute admissions have been full for nine days on top of it — the escalation policy starts at 95% and we are at 94%. Escalated by the clinic manager this morning.',
     kind: 'urgent',
     owner: 'Jizan clinic',
     status: 'open',
@@ -78,25 +78,9 @@ const ASSISTANT_SEEDS: SeedSpec[] = [
     status: 'open',
   },
   {
-    id: 'seed-jizan-beds',
-    title: 'Jizan inpatient beds at capacity',
-    detail: 'Acute admissions have been full for nine days. The escalation policy starts at 95% and we are at 94%.',
-    kind: 'urgent',
-    owner: 'Jizan clinic',
-    status: 'open',
-  },
-  {
-    id: 'seed-jizan-transport',
-    title: 'Jizan patient transport gaps',
-    detail: 'Two outlying centres have no transport cover on Thursdays. Families are being asked to travel at their own cost.',
-    kind: 'concern',
-    owner: 'Nouf',
-    status: 'open',
-  },
-  {
     id: 'seed-jizan-clinic-hours',
     title: 'Extend Jizan evening clinic',
-    detail: 'Abdulrahman suggests a Tuesday evening slot to cut the wait for working patients. Needs a room and one registrar.',
+    detail: 'Abdulrahman suggests a Tuesday evening slot to cut the wait for working patients. Needs a room and one registrar. Nouf points out the two outlying centres still have no transport cover on Thursdays, so families there travel at their own cost either way.',
     kind: 'idea',
     owner: 'Abdulrahman',
     status: 'open',
@@ -118,52 +102,73 @@ const ASSISTANT_SEEDS: SeedSpec[] = [
  * patient identifiers in any of them. Vector, so they stay sharp both in the
  * thumbnail strip and at full size.
  *
- * Several entries carry more than one: an item takes any number of attachments,
- * the strip wraps, and the lightbox pages between them with the arrow keys.
+ * Every entry carries at least two, including the children: an item with an
+ * empty strip reads as an item with nothing behind it, which is the opposite of
+ * what these maps are meant to show. The same document appears on more than one
+ * entry where it genuinely bears on both — one rota answers both the staffing
+ * shortfall and the evening-clinic idea.
  */
 const ASSISTANT_ATTACHMENTS: SeedAttachment[] = [
-  // Jizan — the staffing escalation, with the evidence behind it.
+  // Jizan — the staffing escalation, with the beds and the waits behind it.
   { id: 'seed-att-rota', nodeId: 'seed-jizan', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
   { id: 'seed-att-waits', nodeId: 'seed-jizan', name: 'waiting-times-aug.svg', assetUrl: 'demo/waiting-times.svg', mimeType: 'image/svg+xml', size: 6211 },
+  { id: 'seed-att-beds', nodeId: 'seed-jizan', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
   { id: 'seed-att-circular', nodeId: 'seed-jizan', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
 
+  // The shortfall the directorate asked for in writing, and where they asked.
   { id: 'seed-att-jizan-child', nodeId: 'seed-jizan-child', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
+  { id: 'seed-att-jizan-child-2', nodeId: 'seed-jizan-child', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
 
   // Raghad — the triage proposal, plus the demand it is answering.
   { id: 'seed-att-triage', nodeId: 'seed-raghad', name: 'intake-triage-draft.svg', assetUrl: 'demo/triage-flow.svg', mimeType: 'image/svg+xml', size: 4543 },
   { id: 'seed-att-referrals', nodeId: 'seed-raghad', name: 'referral-volumes.svg', assetUrl: 'demo/referral-volumes.svg', mimeType: 'image/svg+xml', size: 4332 },
 
+  // Khalid — the empty supervision line, and the meeting he raised it in.
   { id: 'seed-att-supervision', nodeId: 'seed-khalid', name: 'supervision-lines.svg', assetUrl: 'demo/supervision-structure.svg', mimeType: 'image/svg+xml', size: 3409 },
+  { id: 'seed-att-khalid-2', nodeId: 'seed-khalid', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
 
+  // Morale — staffing as the largest incident category, and who reports to whom.
   { id: 'seed-att-incidents', nodeId: 'seed-morale', name: 'incident-summary-q3.svg', assetUrl: 'demo/incident-summary.svg', mimeType: 'image/svg+xml', size: 4094 },
+  { id: 'seed-att-morale-2', nodeId: 'seed-morale', name: 'supervision-lines.svg', assetUrl: 'demo/supervision-structure.svg', mimeType: 'image/svg+xml', size: 3409 },
   { id: 'seed-att-morale-child', nodeId: 'seed-morale-child', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
+  { id: 'seed-att-morale-child-2', nodeId: 'seed-morale-child', name: 'incident-summary-q3.svg', assetUrl: 'demo/incident-summary.svg', mimeType: 'image/svg+xml', size: 4094 },
 
+  // The capacity return — the circular that demands it and the figures it needs.
   { id: 'seed-att-roadmap', nodeId: 'seed-roadmap', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
   { id: 'seed-att-roadmap-2', nodeId: 'seed-roadmap', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
+  { id: 'seed-att-roadmap-3', nodeId: 'seed-roadmap', name: 'waiting-times-aug.svg', assetUrl: 'demo/waiting-times.svg', mimeType: 'image/svg+xml', size: 6211 },
 
-  { id: 'seed-att-beds', nodeId: 'seed-jizan-beds', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
-  { id: 'seed-att-beds-2', nodeId: 'seed-jizan-beds', name: 'incident-summary-q3.svg', assetUrl: 'demo/incident-summary.svg', mimeType: 'image/svg+xml', size: 4094 },
-
-  { id: 'seed-att-transport', nodeId: 'seed-jizan-transport', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
-
+  // The evening clinic, and the transport gap it would not close.
   { id: 'seed-att-hours', nodeId: 'seed-jizan-clinic-hours', name: 'waiting-times-aug.svg', assetUrl: 'demo/waiting-times.svg', mimeType: 'image/svg+xml', size: 6211 },
   { id: 'seed-att-hours-2', nodeId: 'seed-jizan-clinic-hours', name: 'referral-volumes.svg', assetUrl: 'demo/referral-volumes.svg', mimeType: 'image/svg+xml', size: 4332 },
+  { id: 'seed-att-transport', nodeId: 'seed-jizan-clinic-hours', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
 
+  // Fatimah — the reporting template she wants agreed before she starts.
   { id: 'seed-att-fatimah', nodeId: 'seed-fatimah', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
+  { id: 'seed-att-fatimah-2', nodeId: 'seed-fatimah', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
 ];
 
-/** The director's own paperwork — the evidence behind a decision, not an inbox. */
+/**
+ * The director's own paperwork — the evidence behind a decision, not an inbox.
+ * Three entries, three attachments each: with a map this short, an entry with a
+ * thin strip stands out, and every one of these is a decision he is expected to
+ * have read something before making.
+ */
 const DIRECTOR_ATTACHMENTS: SeedAttachment[] = [
+  // The posts — what the shortfall costs, in beds, cover and waiting time.
   { id: 'seed-att-dir-beds', nodeId: 'seed-dir-jizan-posts', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
   { id: 'seed-att-dir-rota', nodeId: 'seed-dir-jizan-posts', name: 'jizan-weekly-rota.svg', assetUrl: 'demo/clinic-rota.svg', mimeType: 'image/svg+xml', size: 9524 },
   { id: 'seed-att-dir-waits', nodeId: 'seed-dir-jizan-posts', name: 'waiting-times-aug.svg', assetUrl: 'demo/waiting-times.svg', mimeType: 'image/svg+xml', size: 6211 },
 
+  // The second site — the demand behind it, and the site that cannot absorb it.
   { id: 'seed-att-dir-referrals', nodeId: 'seed-dir-jizan-expansion', name: 'referral-volumes.svg', assetUrl: 'demo/referral-volumes.svg', mimeType: 'image/svg+xml', size: 4332 },
+  { id: 'seed-att-dir-expansion-beds', nodeId: 'seed-dir-jizan-expansion', name: 'bed-occupancy.svg', assetUrl: 'demo/bed-occupancy.svg', mimeType: 'image/svg+xml', size: 3090 },
+  { id: 'seed-att-dir-expansion-circular', nodeId: 'seed-dir-jizan-expansion', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
 
+  // Triage region-wide — Raghad's draft, the demand for it, and the meeting.
   { id: 'seed-att-dir-triage', nodeId: 'seed-dir-triage-model', name: 'intake-triage-draft.svg', assetUrl: 'demo/triage-flow.svg', mimeType: 'image/svg+xml', size: 4543 },
-
-  { id: 'seed-att-dir-circular', nodeId: 'seed-dir-capacity-return', name: 'moh-circular-44-217.svg', assetUrl: 'demo/ministry-circular.svg', mimeType: 'image/svg+xml', size: 3994 },
-  { id: 'seed-att-dir-minutes', nodeId: 'seed-dir-capacity-return', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
+  { id: 'seed-att-dir-triage-referrals', nodeId: 'seed-dir-triage-model', name: 'referral-volumes.svg', assetUrl: 'demo/referral-volumes.svg', mimeType: 'image/svg+xml', size: 4332 },
+  { id: 'seed-att-dir-minutes', nodeId: 'seed-dir-triage-model', name: 'regional-minutes.svg', assetUrl: 'demo/meeting-minutes.svg', mimeType: 'image/svg+xml', size: 4226 },
 ];
 
 /** What sits on the director's map: his own decisions and standing worries. */
@@ -189,14 +194,6 @@ const DIRECTOR_SEEDS: SeedSpec[] = [
     title: 'Adopt triage screening region-wide?',
     detail: 'If the Jizan pilot holds up, this becomes the model everywhere. Worth deciding early rather than letting each site invent its own.',
     kind: 'idea',
-    owner: 'Me',
-    status: 'open',
-  },
-  {
-    id: 'seed-dir-capacity-return',
-    title: 'Sign off the Q3 capacity return',
-    detail: 'Goes to the Ministry on the 20th under my name. No extensions this cycle.',
-    kind: 'urgent',
     owner: 'Me',
     status: 'open',
   },
