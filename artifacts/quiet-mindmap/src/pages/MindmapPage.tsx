@@ -2,15 +2,55 @@ import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { StarField } from '../components/StarField';
 import { NodeBubble } from '../components/NodeBubble';
-import { NodePanel } from '../components/NodePanel';
+import { NodePanel, type SharePanelProps } from '../components/NodePanel';
+import { OrbView } from '../components/OrbView';
+import { OrbPanel } from '../components/OrbPanel';
 import { FilterBar } from '../components/FilterBar';
 import { DigestPanel, getStaleOpenNodes, useWeeklyDigestNotification } from '../components/DigestPanel';
+import { ListPanel, LIST_PANEL_SPACE } from '../components/ListPanel';
 import { ZoomControls } from '../components/ZoomControls';
-import { useClerk, useUser } from '@clerk/react';
+import { useUser, useAuthActions } from '../hooks/useAuth';
 import { useLocation } from 'wouter';
-import { useNodes, type SyncStatus } from '../hooks/useNodes';
-import type { MindNode, NodeKind, NodeStatus, Viewport } from '../types';
-import { KIND_META, clampScale } from '../types';
+import { type SyncStatus } from '../hooks/useNodes';
+import { useMap } from '../hooks/useMap';
+import { useStick } from '../hooks/useStick';
+import { findStickTarget, slotPosition, RELEASE_DISTANCE } from '../lib/stick';
+import { useAttachments } from '../hooks/useAttachments';
+import { useOrbs } from '../hooks/useOrbs';
+import type { Attachment, MindNode, NodeKind, NodeStatus, Orb, Viewport } from '../types';
+import { KIND_META, clampScale, kindTint } from '../types';
+import { guestStoreId, persona, isPersonaMode, personaNameFor } from '../lib/persona';
+import { partnerOf, accountName } from '../lib/supabase';
+import { glassSurface } from '../lib/glass';
+import {
+  RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_XS, RADIUS_PILL, BORDER_W, BORDER_W_EMPHASIS, BORDER_CONTROL, SHADOW_FLOAT,
+  ACCENT_BG, ACCENT_BORDER, ACCENT_BORDER_STRONG, ACCENT_UNDERLINE, SUCCESS_BG, SUCCESS_BORDER,
+  DANGER_BG, DANGER_BORDER, STROKE_MUTED, dotGlow, Z,
+} from '../lib/tokens';
+import { T_COLOR } from '../lib/motion';
+import { hoverStyle } from '../lib/hover';
+import { useMotionPrefs } from '../hooks/useMotionPrefs';
+import { computePushOffsets, ZERO_PUSH, type RepelPoint } from '../lib/repulsion';
+
+const EMPTY_ATTACHMENTS: Attachment[] = [];
+
+/**
+ * Turn a storage/database rejection into something actionable. A bare "new row
+ * violates row-level security policy" tells the person nothing about which of
+ * several setup steps is missing.
+ */
+function explainAttachmentError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const m = raw.toLowerCase();
+  if (m.includes('row-level security') || m.includes('violates')) {
+    return 'The server refused the upload. The attachments bucket may be missing its access policies.';
+  }
+  if (m.includes('bucket') && m.includes('not found')) {
+    return 'No attachments bucket exists on the server yet.';
+  }
+  if (m.includes('failed to fetch')) return 'Could not reach the server — check the connection.';
+  return raw || 'Could not add that file';
+}
 
 const DISMISS_KEY = 'quiet-mindmap-seed-notice-dismissed';
 
@@ -23,6 +63,7 @@ const SYNC_LABEL: Record<SyncStatus, string> = {
 };
 
 function PrivacyBadge({ status }: { status: SyncStatus }) {
+  const prefs = useMotionPrefs();
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -37,17 +78,14 @@ function PrivacyBadge({ status }: { status: SyncStatus }) {
         alignItems: 'center',
         gap: 6,
         padding: '6px 14px',
-        borderRadius: 20,
-        background: 'rgba(13,15,33,0.7)',
-        border: '1px solid hsl(228,25%,18%)',
-        backdropFilter: 'blur(6px)',
         fontSize: 11,
         color: 'hsl(220,15%,45%)',
         fontWeight: 500,
-        zIndex: 20,
+        zIndex: Z.privacyBadge,
         userSelect: 'none',
         pointerEvents: 'none',
         whiteSpace: 'nowrap',
+        ...glassSurface('bar', { radius: RADIUS_PILL, blur: prefs.blurBar }),
       }}
     >
       <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
@@ -60,38 +98,88 @@ function PrivacyBadge({ status }: { status: SyncStatus }) {
 }
 
 /**
+ * Whose map this window is, shown only in the two-person demo. Without it the
+ * two windows are indistinguishable at a glance, which is precisely the thing
+ * the demo needs to make obvious.
+ */
+function PersonaBadge({ label }: { label: string }) {
+  const prefs = useMotionPrefs();
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.3 }}
+      style={{
+        position: 'fixed',
+        top: 18,
+        left: 18,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '6px 13px',
+        fontSize: 11.5,
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'hsl(262,65%,76%)',
+        zIndex: Z.chrome,
+        userSelect: 'none',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
+        ...glassSurface('bar', { radius: RADIUS_PILL, blur: prefs.blurBar, border: `${BORDER_W}px solid ${ACCENT_BORDER}` }),
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          background: 'hsl(262,60%,65%)',
+          boxShadow: dotGlow('hsl(262,60%,65%)'),
+        }}
+      />
+      {label}
+    </motion.div>
+  );
+}
+
+/**
  * Signed in: offers sign out. Signed out: offers the way back to the private,
  * synced map — the only route to it once the sign-in wall is off.
  */
 function AccountButton() {
-  const { signOut } = useClerk();
+  const { signOut } = useAuthActions();
   const { isSignedIn } = useUser();
   const [, setLocation] = useLocation();
+  const prefs = useMotionPrefs();
 
   const signedIn = !!isSignedIn;
 
   return (
     <button
       type="button"
-      onClick={() =>
-        signedIn ? signOut({ redirectUrl: import.meta.env.BASE_URL || '/' }) : setLocation('/sign-in')
-      }
+      onClick={() => {
+        if (signedIn) void signOut();
+        else setLocation('/sign-in');
+      }}
       style={{
         // Bottom-left is the only free corner: the filter bar owns the top row,
         // the zoom controls the bottom-right, the privacy badge the centre.
         position: 'fixed',
         bottom: 18,
         left: 18,
-        zIndex: 70,
+        zIndex: Z.chrome,
         padding: '6px 13px',
-        borderRadius: 9,
-        border: `1px solid ${signedIn ? 'hsl(228,25%,20%)' : 'rgba(139,92,246,0.35)'}`,
-        background: signedIn ? 'rgba(13,15,33,0.75)' : 'rgba(139,92,246,0.14)',
         color: signedIn ? 'hsl(220,15%,55%)' : 'hsl(262,65%,76%)',
         fontSize: 12,
         fontWeight: 600,
         cursor: 'pointer',
-        backdropFilter: 'blur(6px)',
+        ...glassSurface('bar', {
+          radius: RADIUS_SM,
+          background: signedIn ? undefined : ACCENT_BG,
+          border: signedIn ? undefined : `${BORDER_W}px solid ${ACCENT_BORDER_STRONG}`,
+          blur: prefs.blurBar,
+        }),
       }}
     >
       {signedIn ? 'Sign out' : 'Sign in to sync'}
@@ -99,54 +187,27 @@ function AccountButton() {
   );
 }
 
-/** The focus orb, anchored at world origin. */
-function CenterHub() {
-  return (
-    <div style={{ position: 'absolute', left: 0, top: 0, transform: 'translate(-50%, -50%)', zIndex: 5, pointerEvents: 'none' }}>
-      <div
-        className="hub-pulse"
-        style={{
-          width: 88,
-          height: 88,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle at 38% 38%, hsl(262,55%,40%), hsl(228,40%,18%))',
-          border: '1.5px solid rgba(139,92,246,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexDirection: 'column',
-          gap: 3,
-        }}
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <circle cx="10" cy="10" r="3" fill="rgba(167,139,250,0.9)" />
-          <circle cx="10" cy="3" r="1.5" fill="rgba(167,139,250,0.5)" />
-          <circle cx="10" cy="17" r="1.5" fill="rgba(167,139,250,0.5)" />
-          <circle cx="3" cy="10" r="1.5" fill="rgba(167,139,250,0.5)" />
-          <circle cx="17" cy="10" r="1.5" fill="rgba(167,139,250,0.5)" />
-          <line x1="10" y1="7" x2="10" y2="4.5" stroke="rgba(167,139,250,0.4)" strokeWidth="1" />
-          <line x1="10" y1="13" x2="10" y2="15.5" stroke="rgba(167,139,250,0.4)" strokeWidth="1" />
-          <line x1="7" y1="10" x2="4.5" y2="10" stroke="rgba(167,139,250,0.4)" strokeWidth="1" />
-          <line x1="13" y1="10" x2="15.5" y2="10" stroke="rgba(167,139,250,0.4)" strokeWidth="1" />
-        </svg>
-        <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(167,139,250,0.7)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          focus
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /**
  * Lines are drawn in the same transformed world space as the nodes, so they
  * track live while a node is dragged and stay correct at any zoom level.
  */
-function ConnectionLines({ nodes, visibleIds }: { nodes: MindNode[]; visibleIds: Set<string> }) {
+function ConnectionLines({
+  nodes,
+  visibleIds,
+  orbs,
+  nodeOrbAssignments,
+}: {
+  nodes: MindNode[];
+  visibleIds: Set<string>;
+  orbs: Orb[];
+  nodeOrbAssignments: Record<string, string>;
+}) {
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const orbById = useMemo(() => new Map(orbs.map((o) => [o.id, o])), [orbs]);
 
   return (
     <svg
-      style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 1, overflow: 'visible', pointerEvents: 'none', zIndex: 2 }}
+      style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 1, overflow: 'visible', pointerEvents: 'none', zIndex: Z.connections }}
     >
       {nodes
         .filter((n) => visibleIds.has(n.id))
@@ -154,9 +215,10 @@ function ConnectionLines({ nodes, visibleIds }: { nodes: MindNode[]; visibleIds:
           const meta = KIND_META[n.kind];
           const faded = n.status !== 'open';
 
-          // Attach to the nearest visible ancestor; fall back to the focus orb.
+          // Attach to the nearest visible ancestor node, if any.
           let anchorX = 0;
           let anchorY = 0;
+          let anchoredToAncestor = false;
           let cursor = n.parentId ? byId.get(n.parentId) : undefined;
           const guard = new Set<string>();
           while (cursor && !guard.has(cursor.id)) {
@@ -164,25 +226,39 @@ function ConnectionLines({ nodes, visibleIds }: { nodes: MindNode[]; visibleIds:
             if (visibleIds.has(cursor.id)) {
               anchorX = cursor.x;
               anchorY = cursor.y;
+              anchoredToAncestor = true;
               break;
             }
             cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
           }
 
-          const isSubLink = anchorX !== 0 || anchorY !== 0;
+          // Otherwise, root tasks anchor to their assigned orb (primary orb
+          // sits at world origin, so (0, 0) is still the default fallback).
+          if (!anchoredToAncestor && n.parentId === null) {
+            const orb = orbById.get(nodeOrbAssignments[n.id] ?? '');
+            if (orb) {
+              anchorX = orb.x;
+              anchorY = orb.y;
+            }
+          }
+
+          const isSubLink = anchoredToAncestor;
 
           return (
             <line
               key={n.id}
+              // The class (not an inline `animation` style) is what lets the
+              // prefers-reduced-motion media query in index.css freeze this —
+              // an inline animation would win over the query regardless.
+              className="orbit-line"
               x1={anchorX}
               y1={anchorY}
               x2={n.x}
               y2={n.y}
-              stroke={faded ? 'rgba(120,125,165,0.35)' : meta.border}
+              stroke={faded ? STROKE_MUTED : kindTint(n.kind, 'border')}
               strokeWidth={isSubLink ? 1.5 : 1}
               strokeDasharray={isSubLink ? '2 5' : '4 8'}
               opacity={faded ? 0.3 : isSubLink ? 0.7 : 0.55}
-              style={{ animation: 'orbit-flow 20s linear infinite' }}
             />
           );
         })}
@@ -202,7 +278,7 @@ function EmptyState({ onAdd, filtered }: { onAdd: () => void; filtered: boolean 
         left: '50%',
         transform: 'translate(-50%, -50%)',
         textAlign: 'center',
-        zIndex: 30,
+        zIndex: Z.emptyState,
         pointerEvents: 'none',
         marginTop: 70,
       }}
@@ -221,7 +297,7 @@ function EmptyState({ onAdd, filtered }: { onAdd: () => void; filtered: boolean 
                 cursor: 'pointer',
                 pointerEvents: 'all',
                 textDecoration: 'underline',
-                textDecorationColor: 'rgba(139,92,246,0.4)',
+                textDecorationColor: ACCENT_UNDERLINE,
               }}
             >
               Add your first entry
@@ -234,6 +310,8 @@ function EmptyState({ onAdd, filtered }: { onAdd: () => void; filtered: boolean 
   );
 }
 
+const nodeDetailCloseHover = hoverStyle({ color: 'hsl(220,20%,75%)' });
+
 function NodeDetail({
   node,
   parent,
@@ -242,6 +320,7 @@ function NodeDetail({
   onAddChild,
   onClose,
   onStatusChange,
+  share,
 }: {
   node: MindNode;
   parent: MindNode | null;
@@ -250,9 +329,11 @@ function NodeDetail({
   onAddChild: () => void;
   onClose: () => void;
   onStatusChange: (id: string, s: NodeStatus) => void;
+  share: SharePanelProps | null;
 }) {
   const meta = KIND_META[node.kind];
   const date = new Date(node.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const prefs = useMotionPrefs();
 
   return (
     <motion.div
@@ -260,24 +341,25 @@ function NodeDetail({
       initial={{ opacity: 0, y: 6, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 6, scale: 0.98 }}
-      transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+      transition={prefs.panelSpring}
       style={{
         position: 'fixed',
         bottom: 62,
         left: '50%',
         transform: 'translateX(-50%)',
         width: 'min(500px, calc(100vw - 40px))',
-        background: 'hsl(228,32%,10%)',
-        border: `1px solid ${meta.border}`,
-        borderRadius: 16,
         padding: '18px 22px',
-        zIndex: 60,
-        boxShadow: `0 0 40px ${meta.glow.replace('0.45)', '0.18)').replace('0.5)', '0.18)')}, 0 8px 32px rgba(0,0,0,0.5)`,
-        backdropFilter: 'blur(12px)',
+        zIndex: Z.nodeDetail,
+        ...glassSurface('panel', {
+          radius: RADIUS_LG,
+          border: `${BORDER_W}px solid ${kindTint(node.kind, 'border')}`,
+          shadow: `0 0 40px ${kindTint(node.kind, 'glowSoft')}, ${SHADOW_FLOAT}`,
+          blur: prefs.blurPanel,
+        }),
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, boxShadow: `0 0 8px ${meta.color}`, marginTop: 5, flexShrink: 0 }} />
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, boxShadow: dotGlow(meta.color), marginTop: 5, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           {parent && (
             <p style={{ margin: '0 0 3px', fontSize: 11, color: 'hsl(220,15%,42%)', fontWeight: 500 }}>
@@ -292,7 +374,7 @@ function NodeDetail({
             <span style={{ fontSize: 11, color: 'hsl(220,15%,42%)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{meta.label}</span>
             <span style={{ fontSize: 11, color: 'hsl(220,15%,38%)', fontWeight: 500 }}>{date}</span>
             {childCount > 0 && (
-              <span style={{ fontSize: 11, color: 'hsl(220,15%,50%)', fontWeight: 600, background: 'rgba(255,255,255,0.06)', borderRadius: 5, padding: '1px 6px' }}>
+              <span style={{ fontSize: 11, color: 'hsl(220,15%,50%)', fontWeight: 600, background: 'rgba(255,255,255,0.05)', borderRadius: RADIUS_XS, padding: '1px 6px' }}>
                 {childCount} sub-item{childCount === 1 ? '' : 's'}
               </span>
             )}
@@ -301,9 +383,8 @@ function NodeDetail({
         <button
           onClick={onClose}
           aria-label="Close"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(220,15%,45%)', padding: 4, borderRadius: 6, flexShrink: 0, transition: 'color 0.15s' }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = 'hsl(220,20%,75%)')}
-          onMouseLeave={(e) => (e.currentTarget.style.color = 'hsl(220,15%,45%)')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(220,15%,45%)', padding: 4, borderRadius: RADIUS_XS, flexShrink: 0, transition: T_COLOR }}
+          {...nodeDetailCloseHover}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -321,9 +402,9 @@ function NodeDetail({
             onClick={() => onStatusChange(node.id, 'handled')}
             style={{
               padding: '7px 14px',
-              borderRadius: 8,
-              border: '1px solid rgba(52,211,153,0.3)',
-              background: 'rgba(52,211,153,0.1)',
+              borderRadius: RADIUS_SM,
+              border: `${BORDER_W}px solid ${SUCCESS_BORDER}`,
+              background: SUCCESS_BG,
               color: '#34d399',
               fontSize: 12,
               fontWeight: 700,
@@ -342,7 +423,7 @@ function NodeDetail({
         {node.status === 'handled' && (
           <button
             onClick={() => onStatusChange(node.id, 'open')}
-            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+            style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
           >
             Reopen
           </button>
@@ -352,9 +433,9 @@ function NodeDetail({
           onClick={onAddChild}
           style={{
             padding: '7px 14px',
-            borderRadius: 8,
-            border: '1px solid rgba(139,92,246,0.3)',
-            background: 'rgba(139,92,246,0.1)',
+            borderRadius: RADIUS_SM,
+            border: `${BORDER_W}px solid ${ACCENT_BORDER}`,
+            background: ACCENT_BG,
             color: 'hsl(262,65%,74%)',
             fontSize: 12,
             fontWeight: 700,
@@ -373,7 +454,7 @@ function NodeDetail({
         {node.status !== 'archived' && (
           <button
             onClick={() => onStatusChange(node.id, 'archived')}
-            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,45%)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,45%)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
           >
             Archive
           </button>
@@ -381,15 +462,43 @@ function NodeDetail({
         {node.status === 'archived' && (
           <button
             onClick={() => onStatusChange(node.id, 'open')}
-            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+            style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
           >
             Restore
           </button>
         )}
 
+        {/* The demo's headline move, so it sits one click from the map rather
+            than behind Edit. Both people get the same controls: send what is
+            yours, hand back what is not. */}
+        {share && !share.isShared && (
+          <button
+            onClick={share.onSend}
+            style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W_EMPHASIS}px solid ${ACCENT_BORDER_STRONG}`, background: ACCENT_BG, color: 'hsl(262,75%,78%)', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M1.5 6h8M6.5 2.5L10 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Send to {share.partnerName}
+          </button>
+        )}
+
+        {share && share.isShared && (
+          <button
+            onClick={share.isOwner ? share.onTakeBack : share.onReturn}
+            title={share.isOwner ? 'Take it off their map' : 'Hand it back to them'}
+            style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,55%)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M10.5 6h-8M5.5 2.5L2 6l3.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {share.isOwner ? 'Take it back' : `Return to ${share.partnerName}`}
+          </button>
+        )}
+
         <button
           onClick={onEdit}
-          style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}
+          style={{ padding: '7px 14px', borderRadius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}
         >
           Edit
         </button>
@@ -399,6 +508,9 @@ function NodeDetail({
 }
 
 export function MindmapPage() {
+  // Called once here; passed down to NodeBubble/OrbView as a prop since those
+  // render once per node/orb and shouldn't each open their own listener.
+  const motionPrefs = useMotionPrefs();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<Viewport>({ x: 0, y: 0, scale: 1 });
@@ -420,22 +532,276 @@ export function MindmapPage() {
     return () => ro.disconnect();
   }, []);
 
-  const { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes, syncStatus } = useNodes(
-    dimensions.w,
-    dimensions.h,
+  // Attachments and orbs are local-only (IndexedDB / localStorage), scoped to
+  // the same guest/account identity as nodes, but deliberately kept out of
+  // useNodes' sync payload.
+  const { isLoaded, user } = useUser();
+  const localStoreId = isLoaded ? (user?.id ?? guestStoreId()) : null;
+
+  const {
+    nodes,
+    addNode,
+    updateNode,
+    moveNodeLive,
+    commitPositions,
+    deleteNode,
+    clearAllNodes,
+    syncStatus,
+    flushNow,
+    sharedIds,
+    sharedAttachments,
+    shareInfo,
+    shareNode,
+    syncSharedAttachments,
+    unshareNode,
+    returnNode,
+    isOwnerOf,
+  } = useMap(dimensions.w, dimensions.h, localStoreId);
+  const {
+    attachments,
+    addFileAttachment,
+    addLinkAttachment,
+    removeAttachment,
+    removeAttachmentsForNode,
+    refreshAttachments,
+  } = useAttachments(localStoreId);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+
+  /**
+   * Own attachments plus those riding along with shared items. Deduplicated by
+   * id because the sender holds both copies: their own record, and the one
+   * published on the shared item.
+   */
+  const visibleAttachments = useMemo(() => {
+    const byId = new Map<string, Attachment>();
+    for (const a of attachments) byId.set(a.id, a);
+    for (const a of sharedAttachments) if (!byId.has(a.id)) byId.set(a.id, a);
+    return [...byId.values()];
+  }, [attachments, sharedAttachments]);
+
+  const attachmentsByNode = useMemo(() => {
+    const byNode = new Map<string, Attachment[]>();
+    visibleAttachments.forEach((a) => {
+      const arr = byNode.get(a.nodeId);
+      if (arr) arr.push(a);
+      else byNode.set(a.nodeId, [a]);
+    });
+    return byNode;
+  }, [visibleAttachments]);
+
+  const {
+    orbs,
+    updateOrb,
+    addOrb,
+    removeOrb,
+    moveOrbLive,
+    commitOrbPosition,
+    nodeOrbAssignments,
+    assignNodeToOrb,
+    unassignNode,
+  } = useOrbs(localStoreId);
+  const [selectedOrbId, setSelectedOrbId] = useState<string | null>(null);
+  const [orbPanelMode, setOrbPanelMode] = useState<'add' | 'edit' | null>(null);
+  const selectedOrb = orbs.find((o) => o.id === selectedOrbId) ?? null;
+
+  const { sticks, stick, unstick, forgetNode, followers, currentSticks } = useStick(localStoreId);
+
+  /**
+   * Mirror of `nodes` for the drag handlers. They run from pointer events, not
+   * from a render, so closing over the array would hand them whatever it was
+   * when the callback was last built rather than what is on screen now.
+   */
+  const nodesRef = useRef<MindNode[]>(nodes);
+  nodesRef.current = nodes;
+
+  /** Every entry in a stuck row — both the followers and what they hang off. */
+  const stuckIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [follower, anchor] of Object.entries(sticks)) {
+      ids.add(follower);
+      ids.add(anchor);
+    }
+    return ids;
+  }, [sticks]);
+
+  // Presentational-only "personal space": whatever's currently being dragged
+  // pushes nearby nodes/orbs aside. Never touches persisted x/y — see
+  // lib/repulsion.ts — so it can't cause data loss or drift.
+  const [draggedPos, setDraggedPos] = useState<RepelPoint | null>(null);
+  const pushOffsets = useMemo(() => {
+    const items: RepelPoint[] = [
+      ...nodes.map((n) => ({ id: n.id, x: n.x, y: n.y })),
+      ...orbs.map((o) => ({ id: o.id, x: o.x, y: o.y })),
+    ];
+    return computePushOffsets(draggedPos, items);
+  }, [draggedPos, nodes, orbs]);
+
+  /**
+   * Where the drag started, and where everything stuck to it started, so each
+   * frame can move the whole row by the same delta. Captured on the first move
+   * rather than on pointer-down, because a bubble only reports a drag once the
+   * pointer has actually travelled — a plain click never gets here.
+   */
+  const dragOrigin = useRef<{
+    id: string;
+    x: number;
+    y: number;
+    followers: { id: string; x: number; y: number }[];
+  } | null>(null);
+
+  const handleNodeDragMove = useCallback(
+    (id: string, x: number, y: number) => {
+      if (dragOrigin.current?.id !== id) {
+        const node = nodesRef.current.find((n) => n.id === id);
+        dragOrigin.current = {
+          id,
+          x: node?.x ?? x,
+          y: node?.y ?? y,
+          followers: followers(id)
+            .map((fid) => nodesRef.current.find((n) => n.id === fid))
+            .filter((n): n is MindNode => !!n)
+            .map((n) => ({ id: n.id, x: n.x, y: n.y })),
+        };
+      }
+
+      moveNodeLive(id, x, y);
+
+      // A stuck row travels as one piece.
+      const origin = dragOrigin.current;
+      if (origin && origin.followers.length > 0) {
+        const dx = x - origin.x;
+        const dy = y - origin.y;
+        for (const f of origin.followers) {
+          moveNodeLive(f.id, Math.round(f.x + dx), Math.round(f.y + dy));
+        }
+      }
+
+      setDraggedPos({ id, x, y });
+    },
+    [moveNodeLive, followers],
   );
+
+  const handleNodeDragEnd = useCallback(() => {
+    const origin = dragOrigin.current;
+    dragOrigin.current = null;
+    setDraggedPos(null);
+
+    const dragged = origin ? nodesRef.current.find((n) => n.id === origin.id) : undefined;
+    if (dragged) {
+      const sticks = currentSticks();
+      const anchorId = sticks[dragged.id];
+
+      if (anchorId) {
+        // Already in a row: dragging it well clear of its anchor takes it out.
+        const anchor = nodesRef.current.find((n) => n.id === anchorId);
+        if (anchor && Math.hypot(dragged.x - anchor.x, dragged.y - anchor.y) > RELEASE_DISTANCE) {
+          unstick(dragged.id);
+        }
+      } else {
+        const target = findStickTarget(dragged.id, dragged, nodesRef.current, sticks);
+        if (target) {
+          const occupied = Object.entries(sticks)
+            .filter(([, a]) => a === target.id)
+            .map(([fid]) => {
+              const f = nodesRef.current.find((n) => n.id === fid);
+              return f ? f.x - target.x : NaN;
+            })
+            .filter((n) => Number.isFinite(n));
+          const slot = slotPosition(target, dragged.x, occupied);
+          moveNodeLive(dragged.id, slot.x, slot.y);
+          stick(dragged.id, target.id);
+        }
+      }
+    }
+
+    commitPositions();
+  }, [commitPositions, moveNodeLive, currentSticks, stick, unstick]);
+
+  const handleOrbDragMove = useCallback(
+    (id: string, x: number, y: number) => {
+      moveOrbLive(id, x, y);
+      setDraggedPos({ id, x, y });
+    },
+    [moveOrbLive],
+  );
+  const handleOrbDragEnd = useCallback(() => {
+    commitOrbPosition();
+    setDraggedPos(null);
+  }, [commitOrbPosition]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<'add' | 'edit' | null>(null);
   const [pendingParentId, setPendingParentId] = useState<string | null>(null);
+  /** Set when "Add a task to this orb" opened the node panel; assigns the new root task to that orb. */
+  const [pendingOrbId, setPendingOrbId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<NodeKind | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<NodeStatus | 'all'>('open');
   const [showClearPrompt, setShowClearPrompt] = useState(false);
   const [digestOpen, setDigestOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(() => !!localStorage.getItem(DISMISS_KEY));
 
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
+
+  /**
+   * Whose map this window shows — the signed-in account if there is one,
+   * otherwise the `?as=` persona. Absent for an ordinary single map, where
+   * naming the only person on screen would be noise.
+   */
+  const demoBadgeLabel = useMemo(() => {
+    if (user && partnerOf(user.id)) return accountName(user.id);
+    return isPersonaMode ? persona.name : null;
+  }, [user]);
+
+  /** An item the other person sent is theirs to remove, not ours. */
+  const canDeleteNode = useCallback(
+    (id: string) => !sharedIds.has(id) || isOwnerOf(id),
+    [sharedIds, isOwnerOf],
+  );
+
+  const shareStateFor = useCallback(
+    (id: string): 'sent' | 'received' | null => {
+      if (!sharedIds.has(id)) return null;
+      return isOwnerOf(id) ? 'sent' : 'received';
+    },
+    [sharedIds, isOwnerOf],
+  );
+
+  /**
+   * Sharing controls for whichever entry the panel has open. Null outside
+   * persona mode, which is what keeps the single-map experience unchanged.
+   */
+  const sharePanelProps = useMemo<SharePanelProps | null>(() => {
+    // Signed in: the partner comes from the account pairing. Signed out: from
+    // the `?as=` persona. Either route gives the same control.
+    const partnerId = user ? partnerOf(user.id) : isPersonaMode ? persona.partnerId : null;
+    if (!partnerId || !selectedId) return null;
+
+    const shared = sharedIds.has(selectedId);
+    const owner = isOwnerOf(selectedId);
+    const nameOf = user ? accountName : personaNameFor;
+
+    // When it arrived from the other person, name whoever sent it rather than
+    // "the partner" in the abstract.
+    const senderId = user
+      ? (nodes.find((n) => n.id === selectedId)?.ownerId ?? partnerId)
+      : (shareInfo.get(selectedId)?.ownerId ?? partnerId);
+
+    return {
+      partnerName: shared && !owner ? nameOf(senderId) : nameOf(partnerId),
+      isShared: shared,
+      isOwner: owner,
+      onSend: () => shareNode(selectedId, partnerId, attachmentsByNode.get(selectedId) ?? []),
+      onTakeBack: () => unshareNode(selectedId),
+      onReturn: () => {
+        returnNode(selectedId);
+        // It is about to leave this map, so nothing should stay selected.
+        setSelectedId(null);
+        setPanelMode(null);
+      },
+    };
+  }, [user, nodes, selectedId, sharedIds, shareInfo, isOwnerOf, shareNode, unshareNode, returnNode, attachmentsByNode]);
   const selectedParent = selectedNode?.parentId ? nodes.find((n) => n.id === selectedNode.parentId) ?? null : null;
 
   const childCounts = useMemo(() => {
@@ -630,24 +996,168 @@ export function MindmapPage() {
 
   const openAdd = useCallback(() => {
     setPendingParentId(null);
+    setPendingOrbId(null);
     setSelectedId(null);
+    setOrbPanelMode(null);
+    setSelectedOrbId(null);
     setPanelMode('add');
   }, []);
 
   const openAddChild = useCallback(() => {
     if (!selectedId) return;
     setPendingParentId(selectedId);
+    setPendingOrbId(null);
+    setOrbPanelMode(null);
+    setSelectedOrbId(null);
     setPanelMode('add');
   }, [selectedId]);
 
   const openEdit = useCallback(() => {
-    if (selectedId) setPanelMode('edit');
+    if (selectedId) {
+      setOrbPanelMode(null);
+      setSelectedOrbId(null);
+      setPanelMode('edit');
+    }
   }, [selectedId]);
 
   const closePanel = useCallback(() => {
     setPanelMode(null);
     setPendingParentId(null);
+    setPendingOrbId(null);
   }, []);
+
+  const openOrbEdit = useCallback((id: string) => {
+    setPanelMode(null);
+    setPendingParentId(null);
+    setPendingOrbId(null);
+    setSelectedOrbId(id);
+    setOrbPanelMode('edit');
+  }, []);
+
+  const openAddOrb = useCallback(() => {
+    setPanelMode(null);
+    setPendingParentId(null);
+    setPendingOrbId(null);
+    setSelectedOrbId(null);
+    setOrbPanelMode('add');
+  }, []);
+
+  const closeOrbPanel = useCallback(() => {
+    setOrbPanelMode(null);
+    setSelectedOrbId(null);
+  }, []);
+
+  const openAddTaskForOrb = useCallback((orbId: string) => {
+    setOrbPanelMode(null);
+    setSelectedOrbId(null);
+    setPendingParentId(null);
+    setPendingOrbId(orbId);
+    setSelectedId(null);
+    setPanelMode('add');
+  }, []);
+
+  const handleAddAttachmentFiles = useCallback(
+    (nodeId: string, files: FileList) => {
+      setAttachmentError(null);
+      void (async () => {
+        // The entry has to exist server-side before anything can be attached to
+        // it — that is what the attachment policy checks. A seeded entry, or one
+        // typed moments ago, may still be sitting in the outbound queue.
+        if (user) {
+          try {
+            await flushNow();
+          } catch {
+            // Push failed; the upload below will report the real problem.
+          }
+        }
+
+        for (const file of Array.from(files)) {
+          try {
+            await addFileAttachment(nodeId, file);
+          } catch (err) {
+            setAttachmentError(explainAttachmentError(err));
+          }
+        }
+      })();
+    },
+    [addFileAttachment, user, flushNow],
+  );
+
+  const handleAddAttachmentLink = useCallback(
+    (nodeId: string, url: string, name?: string) => {
+      setAttachmentError(null);
+      addLinkAttachment(nodeId, url, name);
+    },
+    [addLinkAttachment],
+  );
+
+  /**
+   * When the set of shared entries changes — one arrives, or is returned — pull
+   * the attachment list again. The pictures belong to the entry, not to this
+   * account, so they only become visible once the entry is.
+   */
+  useEffect(() => {
+    if (!user) return;
+    void refreshAttachments();
+  }, [user, sharedIds, refreshAttachments]);
+
+  /**
+   * Once the entries have landed server-side, retry any attachment that was
+   * rejected for referring to an entry that did not exist yet. On a fresh
+   * sign-in the seeded pictures and their entries race, and the pictures lose.
+   */
+  useEffect(() => {
+    if (!user || syncStatus !== 'synced') return;
+    void refreshAttachments();
+  }, [user, syncStatus, refreshAttachments]);
+
+  // A picture attached *after* an item was sent must still reach the other
+  // person, so the shared record's attachment list tracks the owner's own.
+  // `syncSharedAttachments` ignores no-op calls, which is what stops this from
+  // feeding back into itself.
+  useEffect(() => {
+    if (!isPersonaMode) return;
+    for (const id of sharedIds) {
+      if (!isOwnerOf(id)) continue;
+      syncSharedAttachments(id, attachments.filter((a) => a.nodeId === id));
+    }
+  }, [attachments, sharedIds, isOwnerOf, syncSharedAttachments]);
+
+  const handleDeleteNode = useCallback(
+    (id: string) => {
+      deleteNode(id);
+      forgetNode(id);
+      removeAttachmentsForNode(id);
+      unassignNode(id);
+    },
+    [deleteNode, removeAttachmentsForNode, unassignNode, forgetNode],
+  );
+
+  const handleSelectNode = useCallback((id: string) => {
+    setOrbPanelMode(null);
+    setSelectedOrbId(null);
+    setSelectedId(id);
+  }, []);
+
+  /**
+   * Select from the list and bring the node into view. The centre is biased
+   * right by the panel's width so the node doesn't land underneath the glass.
+   * Scale is left alone — the list is for finding things, not re-zooming.
+   */
+  const handleSelectFromList = useCallback(
+    (id: string) => {
+      handleSelectNode(id);
+      const node = nodes.find((n) => n.id === id);
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!node || !rect || rect.width === 0) return;
+      setView((prev) => ({
+        ...prev,
+        x: (rect.width + LIST_PANEL_SPACE) / 2 - node.x * prev.scale,
+        y: rect.height / 2 - node.y * prev.scale,
+      }));
+    },
+    [handleSelectNode, nodes],
+  );
 
   const dismissNotice = useCallback(() => {
     localStorage.setItem(DISMISS_KEY, '1');
@@ -657,6 +1167,7 @@ export function MindmapPage() {
 
   const showSeedNotice = !noticeDismissed && nodes.length > 0;
   const pendingParent = pendingParentId ? nodes.find((n) => n.id === pendingParentId) ?? null : null;
+  const pendingOrb = pendingOrbId ? orbs.find((o) => o.id === pendingOrbId) ?? null : null;
 
   // Keyboard: N to add, Escape to close.
   useEffect(() => {
@@ -665,16 +1176,21 @@ export function MindmapPage() {
       const typing = tag === 'INPUT' || tag === 'TEXTAREA';
       if (e.key === 'Escape') {
         if (panelMode) closePanel();
+        else if (orbPanelMode) closeOrbPanel();
         else setSelectedId(null);
       }
-      if (!typing && (e.key === 'n' || e.key === 'N') && !panelMode) {
+      if (!typing && (e.key === 'n' || e.key === 'N') && !panelMode && !orbPanelMode) {
         e.preventDefault();
         openAdd();
+      }
+      if (!typing && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        setListOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [panelMode, closePanel, openAdd]);
+  }, [panelMode, orbPanelMode, closePanel, closeOrbPanel, openAdd]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden', background: 'hsl(228,35%,8%)' }}>
@@ -683,7 +1199,7 @@ export function MindmapPage() {
       <div
         ref={canvasRef}
         onPointerDown={handleCanvasPointerDown}
-        style={{ position: 'absolute', inset: 0, zIndex: 1, cursor: 'grab', touchAction: 'none' }}
+        style={{ position: 'absolute', inset: 0, zIndex: Z.canvas, cursor: 'grab', touchAction: 'none' }}
       >
         {/* World space: everything inside shares one pan/zoom transform, so
             nodes and their connection lines can never drift apart. */}
@@ -698,8 +1214,20 @@ export function MindmapPage() {
             transformOrigin: '0 0',
           }}
         >
-          <CenterHub />
-          <ConnectionLines nodes={nodes} visibleIds={visibleIds} />
+          {orbs.map((orb) => (
+            <OrbView
+              key={orb.id}
+              orb={orb}
+              isSelected={orb.id === selectedOrbId}
+              pushOffset={pushOffsets.get(orb.id) ?? ZERO_PUSH}
+              settle={motionPrefs.settle}
+              onEdit={openOrbEdit}
+              onDragMove={handleOrbDragMove}
+              onDragEnd={handleOrbDragEnd}
+              screenToWorld={screenToWorld}
+            />
+          ))}
+          <ConnectionLines nodes={nodes} visibleIds={visibleIds} orbs={orbs} nodeOrbAssignments={nodeOrbAssignments} />
           <AnimatePresence>
             {visibleNodes.map((n) => (
               <NodeBubble
@@ -708,9 +1236,14 @@ export function MindmapPage() {
                 isSelected={n.id === selectedId}
                 isChild={n.parentId !== null}
                 childCount={childCounts.get(n.id) ?? 0}
-                onSelect={setSelectedId}
-                onDragMove={moveNodeLive}
-                onDragEnd={commitPositions}
+                attachments={attachmentsByNode.get(n.id) ?? EMPTY_ATTACHMENTS}
+                shareState={shareStateFor(n.id)}
+                isStuck={stuckIds.has(n.id)}
+                pushOffset={pushOffsets.get(n.id) ?? ZERO_PUSH}
+                motionPrefs={motionPrefs}
+                onSelect={handleSelectNode}
+                onDragMove={handleNodeDragMove}
+                onDragEnd={handleNodeDragEnd}
                 screenToWorld={screenToWorld}
               />
             ))}
@@ -734,7 +1267,27 @@ export function MindmapPage() {
         staleCount={staleCount}
         digestOpen={digestOpen}
         onToggleDigest={() => setDigestOpen((v) => !v)}
+        listOpen={listOpen}
+        onToggleList={() => setListOpen((v) => !v)}
       />
+
+      <AnimatePresence>
+        {listOpen && (
+          <ListPanel
+            nodes={visibleNodes}
+            allNodes={nodes}
+            selectedId={selectedId}
+            childCounts={childCounts}
+            attachmentsByNode={attachmentsByNode}
+            filtered={visibleNodes.length !== nodes.length}
+            onSelect={handleSelectFromList}
+            onClose={() => setListOpen(false)}
+            onStatusChange={handleStatusChange}
+            onDelete={handleDeleteNode}
+            canDelete={canDeleteNode}
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {digestOpen && (
@@ -764,20 +1317,17 @@ export function MindmapPage() {
             alignItems: 'center',
             gap: 10,
             padding: '7px 14px',
-            borderRadius: 10,
-            background: 'rgba(13,15,33,0.85)',
-            border: '1px solid hsl(228,25%,20%)',
-            backdropFilter: 'blur(8px)',
             fontSize: 12,
             color: 'hsl(220,15%,50%)',
-            zIndex: 70,
+            zIndex: Z.chrome,
             fontWeight: 500,
+            ...glassSurface('notice', { radius: RADIUS_SM, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, blur: motionPrefs.blurBar }),
           }}
         >
           <span>These are example entries.</span>
           <button
             onClick={() => setShowClearPrompt(true)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(262,60%,65%)', fontSize: 12, fontWeight: 600, padding: 0, textDecoration: 'underline', textDecorationColor: 'rgba(139,92,246,0.4)' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(262,60%,65%)', fontSize: 12, fontWeight: 600, padding: 0, textDecoration: 'underline', textDecorationColor: ACCENT_UNDERLINE }}
           >
             Clear them
           </button>
@@ -800,14 +1350,12 @@ export function MindmapPage() {
             alignItems: 'center',
             gap: 10,
             padding: '10px 16px',
-            borderRadius: 12,
-            background: 'hsl(228,32%,11%)',
-            border: '1px solid hsl(228,25%,22%)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
             fontSize: 13,
             color: 'hsl(220,20%,80%)',
-            zIndex: 70,
+            zIndex: Z.chrome,
             fontWeight: 500,
+            // Same material as the seed notice it replaces, at the same screen position.
+            ...glassSurface('notice', { radius: RADIUS_MD, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, shadow: SHADOW_FLOAT, blur: motionPrefs.blurBar }),
           }}
         >
           <span>Remove every entry on the map?</span>
@@ -817,13 +1365,13 @@ export function MindmapPage() {
               setSelectedId(null);
               dismissNotice();
             }}
-            style={{ padding: '5px 12px', borderRadius: 7, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.12)', color: 'hsl(0,70%,65%)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+            style={{ padding: '5px 12px', borderRadius: RADIUS_XS, border: `${BORDER_W}px solid ${DANGER_BORDER}`, background: DANGER_BG, color: 'hsl(0,70%,65%)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
           >
             Clear all
           </button>
           <button
             onClick={() => setShowClearPrompt(false)}
-            style={{ padding: '5px 12px', borderRadius: 7, border: '1px solid hsl(228,25%,20%)', background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            style={{ padding: '5px 12px', borderRadius: RADIUS_XS, border: `${BORDER_W}px solid ${BORDER_CONTROL}`, background: 'transparent', color: 'hsl(220,15%,50%)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
           >
             Keep
           </button>
@@ -840,6 +1388,7 @@ export function MindmapPage() {
             onAddChild={openAddChild}
             onClose={() => setSelectedId(null)}
             onStatusChange={handleStatusChange}
+            share={sharePanelProps}
           />
         )}
       </AnimatePresence>
@@ -848,15 +1397,42 @@ export function MindmapPage() {
         node={selectedNode}
         mode={panelMode}
         parentTitle={pendingParent?.title ?? null}
+        orbName={pendingOrb?.name ?? null}
         hasChildren={(selectedNode && (childCounts.get(selectedNode.id) ?? 0) > 0) || false}
         onClose={closePanel}
         onAdd={(data) => {
           const created = addNode({ ...data, parentId: pendingParentId });
+          if (pendingOrb) {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 130 + Math.random() * 40;
+            updateNode(created.id, {
+              x: Math.round(pendingOrb.x + Math.cos(angle) * radius),
+              y: Math.round(pendingOrb.y + Math.sin(angle) * radius),
+            });
+            assignNodeToOrb(created.id, pendingOrb.id);
+          }
           setSelectedId(created.id);
         }}
         onUpdate={updateNode}
-        onDelete={deleteNode}
+        onDelete={handleDeleteNode}
         onStatusChange={handleStatusChange}
+        attachments={selectedNode ? (attachmentsByNode.get(selectedNode.id) ?? EMPTY_ATTACHMENTS) : EMPTY_ATTACHMENTS}
+        onAddAttachmentFiles={handleAddAttachmentFiles}
+        onAddAttachmentLink={handleAddAttachmentLink}
+        onRemoveAttachment={removeAttachment}
+        attachmentError={attachmentError}
+        share={sharePanelProps}
+      />
+
+      <OrbPanel
+        orb={selectedOrb}
+        mode={orbPanelMode}
+        onClose={closeOrbPanel}
+        onAdd={(data) => addOrb(data.name, data.color)}
+        onUpdate={(id, changes) => updateOrb(id, changes)}
+        onRemove={removeOrb}
+        onAddTask={openAddTaskForOrb}
+        onAddOrb={openAddOrb}
       />
 
       <ZoomControls
@@ -866,6 +1442,7 @@ export function MindmapPage() {
         onReset={fitView}
       />
 
+      {demoBadgeLabel && <PersonaBadge label={demoBadgeLabel} />}
       <PrivacyBadge status={syncStatus} />
       <AccountButton />
     </div>

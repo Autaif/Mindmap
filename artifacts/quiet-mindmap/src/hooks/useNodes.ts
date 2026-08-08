@@ -1,9 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useUser } from '@clerk/react';
-import { listNodes, syncNodes } from '@workspace/api-client-react';
-import type { MindNode as ApiMindNode } from '@workspace/api-client-react';
+import { useUser } from './useAuth';
+import { listNodes, syncNodes, subscribeToNodes } from '../lib/nodesTransport';
 import type { MindNode, NodeKind } from '../types';
-import { GUEST_STORE_ID } from '../config';
+import { guestStoreId } from '../lib/persona';
+import { seedsFor } from '../lib/seeds';
 
 const LEGACY_STORAGE_KEY = 'quiet-mindmap-nodes';
 const LEGACY_SEEDED_KEY = 'quiet-mindmap-seeded';
@@ -32,6 +32,29 @@ const ORBIT_RX = 300;
 const ORBIT_RY = 145;
 const CHILD_OFFSET = 110;
 
+/**
+ * How often an open window re-reads on its own. This is a backstop behind the
+ * live subscription, not the way entries normally arrive — see the effect that
+ * uses it for the two cases no event ever covers.
+ */
+const BACKGROUND_REFRESH_MS = 10_000;
+
+/**
+ * Say what the sync engine is doing, in development only.
+ *
+ * Every failure in here used to be swallowed by a bare `catch` that set a
+ * status flag and dropped the error on the floor. A pull throwing on every
+ * attempt and a pull that never runs at all then look exactly the same from
+ * the outside — both just leave the map showing yesterday's entries — and
+ * neither leaves a trace to work from. Anything that decides whether an entry
+ * reaches the other person says so here.
+ */
+function trace(message: string, detail?: unknown) {
+  if (!import.meta.env.DEV) return;
+  if (detail === undefined) console.info(`[sync] ${message}`);
+  else console.info(`[sync] ${message}`, detail);
+}
+
 function radialPosition(index: number, total: number, rx = ORBIT_RX, ry = ORBIT_RY) {
   const angle = (index / Math.max(total, 1)) * 2 * Math.PI - Math.PI / 2;
   return {
@@ -40,56 +63,16 @@ function radialPosition(index: number, total: number, rx = ORBIT_RX, ry = ORBIT_
   };
 }
 
-type SeedSpec = Omit<MindNode, 'id' | 'createdAt' | 'updatedAt' | 'x' | 'y' | 'parentId'> & {
-  children?: Omit<MindNode, 'id' | 'createdAt' | 'updatedAt' | 'x' | 'y' | 'parentId'>[];
-};
-
-const SEED_NODES: SeedSpec[] = [
-  {
-    title: 'Budget review delay',
-    detail: "Finance said Q3 numbers won't be ready until next week. Need to reschedule the board meeting.",
-    kind: 'urgent',
-    owner: 'Finance',
-    status: 'open',
-    children: [
-      { title: 'Reschedule board meeting', detail: 'Find a slot after the numbers land.', kind: 'task', owner: 'Me', status: 'open' },
-    ],
-  },
-  {
-    title: 'New workflow proposal from Ana',
-    detail: 'Ana wants to restructure onboarding. She has a draft doc — promising, needs my sign-off.',
-    kind: 'idea',
-    owner: 'Ana',
-    status: 'open',
-  },
-  {
-    title: 'Team morale after restructuring',
-    detail: 'Several people seem unsettled. Worth a one-on-one round before the all-hands.',
-    kind: 'concern',
-    owner: 'Team',
-    status: 'open',
-    children: [
-      { title: 'One-on-one round', detail: 'Start with the people closest to the change.', kind: 'task', owner: 'Me', status: 'open' },
-    ],
-  },
-  { title: 'Update Q4 roadmap', detail: 'Product asked for priority changes by Friday.', kind: 'task', owner: 'Product', status: 'open' },
-  {
-    title: 'Carlos needs clearer role definition',
-    detail: 'He mentioned feeling uncertain about scope in two meetings. Not critical yet, but worth addressing.',
-    kind: 'concern',
-    owner: 'Carlos',
-    status: 'open',
-  },
-];
-
-function createSeedNodes(): MindNode[] {
+function createSeedNodes(storeId: string): MindNode[] {
   const now = new Date().toISOString();
   const out: MindNode[] = [];
+  const specs = seedsFor(storeId);
 
-  SEED_NODES.forEach((spec, i) => {
+  specs.forEach((spec, i) => {
     const { children, ...rest } = spec;
-    const pos = radialPosition(i, SEED_NODES.length);
-    const parentId = generateId();
+    const pos = radialPosition(i, specs.length);
+    // Seeds carry their own id so seeded attachments can point at them.
+    const parentId = rest.id || generateId();
     out.push({ ...rest, id: parentId, parentId: null, createdAt: now, updatedAt: now, ...pos });
 
     (children ?? []).forEach((child, ci) => {
@@ -99,7 +82,7 @@ function createSeedNodes(): MindNode[] {
       const spread = (ci - ((children!.length - 1) / 2)) * 90;
       out.push({
         ...child,
-        id: generateId(),
+        id: child.id || generateId(),
         parentId,
         createdAt: now,
         updatedAt: now,
@@ -122,13 +105,48 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
-function loadStoredNodes(key: string): MindNode[] {
-  const parsed = readJson<unknown>(key, []);
-  return Array.isArray(parsed) ? (parsed as MindNode[]) : [];
+/**
+ * Repair one stored record's geometry. Coordinates are the only field that can
+ * break the whole map if malformed: a single non-finite x/y flows through
+ * `fitView`'s min/max into `clampScale`, and a NaN `view.scale` renders as
+ * `transform: scale(NaN)` — an invalid declaration the browser drops entirely,
+ * disabling pan, zoom, drag and line alignment at once with no error logged.
+ *
+ * The entry itself is always kept: the title and notes are what the user cannot
+ * recover from anywhere else, so a bad coordinate is repaired to the origin
+ * (draggable back out) rather than being a reason to discard the record.
+ */
+function sanitizeNode(n: MindNode): MindNode {
+  const x = Number(n.x);
+  const y = Number(n.y);
+  if (Number.isFinite(x) && Number.isFinite(y)) return n;
+  return { ...n, x: Number.isFinite(x) ? x : 0, y: Number.isFinite(y) ? y : 0 };
 }
 
-/** Last-write-wins merge of server nodes with locally-pending edits. */
-function mergeServer(server: MindNode[], local: MindNode[], pending: Pending): MindNode[] {
+function loadStoredNodes(key: string): MindNode[] {
+  const parsed = readJson<unknown>(key, []);
+  if (!Array.isArray(parsed)) return [];
+  // Never trust stored geometry — this data outlives any given build, so a
+  // record corrupted by an older version keeps breaking every future one.
+  return (parsed as MindNode[]).filter((n) => !!n && typeof n.id === 'string').map(sanitizeNode);
+}
+
+/**
+ * Last-write-wins merge of server nodes with locally-pending edits.
+ *
+ * `holdPositions` names entries under the pointer right now. A drag is
+ * state-only until pointer-up, so it is not in `pending` yet — without this an
+ * update landing mid-drag (the other account editing, or the periodic pull)
+ * replaces the node being dragged with the server's copy of it and snaps it
+ * back under the cursor. Only its geometry is held back; whatever the other
+ * person changed about it still lands.
+ */
+export function mergeServer(
+  server: MindNode[],
+  local: MindNode[],
+  pending: Pending,
+  holdPositions?: ReadonlySet<string>,
+): MindNode[] {
   const pendingUpserts = new Set(pending.upserts);
   const pendingDeletes = new Set(pending.deletes);
   const byId = new Map<string, MindNode>();
@@ -147,8 +165,33 @@ function mergeServer(server: MindNode[], local: MindNode[], pending: Pending): M
       continue;
     }
     if (pendingUpserts.has(l.id) && l.updatedAt >= s.updatedAt) byId.set(l.id, l);
+    else if (holdPositions?.has(l.id)) byId.set(l.id, { ...s, x: l.x, y: l.y });
   }
   return [...byId.values()];
+}
+
+/**
+ * Whether a freshly merged list differs from what is already on screen.
+ *
+ * `updatedAt` is bumped by every write, so it stands in for the content;
+ * position and sharing are the fields that move without it. Now that a pull
+ * happens on every change and on a timer, most of them find nothing new —
+ * without this check each one would still rebuild the array, re-render every
+ * bubble and rewrite localStorage, forever, in the background.
+ */
+function sameNodes(a: MindNode[], b: MindNode[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((n, i) => {
+    const m = b[i];
+    return (
+      n.id === m.id &&
+      n.updatedAt === m.updatedAt &&
+      n.x === m.x &&
+      n.y === m.y &&
+      n.sharedWith === m.sharedWith &&
+      n.ownerId === m.ownerId
+    );
+  });
 }
 
 export function useNodes(canvasWidth: number, canvasHeight: number) {
@@ -161,13 +204,28 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
    * so committing to a store before that would write their entries into the
    * guest bucket.
    */
-  const storeId = isLoaded ? (userId ?? GUEST_STORE_ID) : null;
+  const storeId = isLoaded ? (userId ?? guestStoreId()) : null;
 
   const [nodes, setNodesState] = useState<MindNode[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
   const [readyStore, setReadyStore] = useState<string | null>(null);
-  /** True once this store's entries are loaded; mutations are unsafe before. */
+  /** True once this store has been adopted and may be watched for changes. */
   const ready = storeId !== null && readyStore === storeId;
+
+  /**
+   * The canvas size, read but never depended on.
+   *
+   * It is only wanted for the one-time migration of pre-account entries below,
+   * and it arrives from a ResizeObserver — so it changes again whenever the
+   * window resizes or the layout settles. Depending on the numbers made the
+   * whole load restart on a resize, and a resize landing mid-load tore the load
+   * down and then skipped it, because the guard below had already been set. The
+   * map came up empty and stayed that way. Only "has it been measured yet"
+   * belongs in the dependencies, and that flips once.
+   */
+  const canvasSize = useRef({ w: canvasWidth, h: canvasHeight });
+  canvasSize.current = { w: canvasWidth, h: canvasHeight };
+  const measured = canvasWidth > 0 && canvasHeight > 0;
 
   const nodesRef = useRef<MindNode[]>([]);
   const pendingRef = useRef<Pending>({ upserts: [], deletes: [] });
@@ -175,6 +233,9 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
   const flushing = useRef(false);
   const initializedFor = useRef<string | null>(null);
   const dirtyPositions = useRef<Set<string>>(new Set());
+  /** One pull at a time; a request arriving mid-pull sets `refreshWanted`. */
+  const refreshing = useRef(false);
+  const refreshWanted = useRef(false);
   /** Bumped whenever identity changes, so in-flight work can disown itself. */
   const epoch = useRef(0);
 
@@ -192,15 +253,24 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     setReadyStore(null);
   }, [storeId]);
 
+  /**
+   * `nodesRef` is the source of truth here, not React state, and it is updated
+   * before this returns. The sync engine reads it from callbacks that run in
+   * the same tick as the change they are reacting to — seeding queues its
+   * entries and flushes them immediately — and a state updater has not run by
+   * then, so reading React's `prev` there saw the map as it was *before* the
+   * seeds existed and uploaded nothing.
+   */
   const setNodes = useCallback(
     (updater: (prev: MindNode[]) => MindNode[]) => {
       if (!storeId) return;
-      setNodesState((prev) => {
-        const next = updater(prev);
-        nodesRef.current = next;
-        localStorage.setItem(nodesKey(storeId), JSON.stringify(next));
-        return next;
-      });
+      const next = updater(nodesRef.current);
+      // An updater that finds nothing to change returns what it was given.
+      // Nothing to render, nothing to write.
+      if (next === nodesRef.current) return;
+      nodesRef.current = next;
+      localStorage.setItem(nodesKey(storeId), JSON.stringify(next));
+      setNodesState(next);
     },
     [storeId],
   );
@@ -254,7 +324,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       .filter((n): n is MindNode => !!n);
 
     try {
-      const merged = await syncNodes({ upserts: upserts as ApiMindNode[], deletes: deleteIds });
+      const merged = await syncNodes({ upserts, deletes: deleteIds });
       // Remove only what we actually flushed; edits made mid-flight stay queued.
       const pNow = pendingRef.current;
       pNow.upserts = pNow.upserts.filter(
@@ -262,7 +332,7 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       );
       pNow.deletes = pNow.deletes.filter((id) => !deleteIds.includes(id));
       savePending();
-      setNodes((prev) => mergeServer(merged as MindNode[], prev, pendingRef.current));
+      setNodes((prev) => mergeServer(merged, prev, pendingRef.current, dirtyPositions.current));
       setSyncStatus(
         pendingRef.current.upserts.length || pendingRef.current.deletes.length ? 'syncing' : 'synced',
       );
@@ -293,20 +363,23 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     // `storeId` is null exactly while Clerk is still loading, so testing it
     // instead of `isLoaded` is the same guard and also narrows it to a string.
     if (storeId === null) return;
-    if (canvasWidth === 0 || canvasHeight === 0) return;
+    if (!measured) return;
     if (initializedFor.current === storeId) return;
     initializedFor.current = storeId;
 
     let cancelled = false;
+    /** Whether the load ran to completion, for the cleanup below. */
+    let settled = false;
 
     pendingRef.current = readJson<Pending>(pendingKey(storeId), { upserts: [], deletes: [] });
     let local = loadStoredNodes(nodesKey(storeId));
 
     // First run under this store on this browser: adopt pre-account entries.
     if (local.length === 0 && localStorage.getItem(LEGACY_STORAGE_KEY)) {
+      const { w, h } = canvasSize.current;
       const legacy = loadStoredNodes(LEGACY_STORAGE_KEY).map((n) =>
         n.parentId === undefined
-          ? { ...n, parentId: null, x: Math.round(n.x - canvasWidth / 2), y: Math.round(n.y - canvasHeight / 2) }
+          ? { ...n, parentId: null, x: Math.round(n.x - w / 2), y: Math.round(n.y - h / 2) }
           : n,
       );
       if (legacy.length > 0) {
@@ -324,11 +397,12 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
 
     if (isGuest) {
       if (local.length === 0 && !localStorage.getItem(seededKey(storeId))) {
-        const seeded = createSeedNodes();
+        const seeded = createSeedNodes(storeId);
         localStorage.setItem(seededKey(storeId), '1');
         setNodes(() => seeded);
       }
       setSyncStatus('local');
+      settled = true;
       return () => {
         cancelled = true;
       };
@@ -338,29 +412,51 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
       try {
         const server = await listNodes();
         if (cancelled) return;
-        setNodes((prev) => mergeServer(server as MindNode[], prev, pendingRef.current));
+        setNodes((prev) => mergeServer(server, prev, pendingRef.current));
 
         const empty =
           server.length === 0 &&
           nodesRef.current.length === 0 &&
           pendingRef.current.upserts.length === 0;
         if (empty && !localStorage.getItem(seededKey(storeId))) {
-          const seeded = createSeedNodes();
+          const seeded = createSeedNodes(storeId);
           localStorage.setItem(seededKey(storeId), '1');
           setNodes(() => seeded);
           for (const n of seeded) enqueue('upserts', n.id);
         }
         setSyncStatus('synced');
         void flush();
-      } catch {
+      } catch (err) {
+        console.warn('[sync] first load failed', err);
         if (!cancelled) setSyncStatus(navigator.onLine ? 'error' : 'offline');
+      } finally {
+        settled = true;
       }
     })();
 
     return () => {
       cancelled = true;
+      // Torn down before the load finished. Release the guard so whatever
+      // re-runs this actually redoes it — otherwise the load is skipped for
+      // good, taking the one-shot seeding with it, and the map stays empty
+      // until a full page reload.
+      if (!settled) initializedFor.current = null;
     };
-  }, [isLoaded, isGuest, storeId, canvasWidth, canvasHeight, enqueue, setNodes, flush]);
+  }, [isLoaded, isGuest, storeId, measured, enqueue, setNodes, flush]);
+
+  /**
+   * Which store the live subscription below is watching.
+   *
+   * Deliberately its own effect rather than a line at the end of the load: the
+   * subscription only needs to know *which* map is on screen, and gating it on
+   * the load having finished meant that a load which was interrupted — or
+   * skipped as already done — left the map with nothing watching it at all.
+   * That is what made sent items sit there until the page was reloaded.
+   */
+  useEffect(() => {
+    if (storeId === null || !measured) return;
+    setReadyStore(storeId);
+  }, [storeId, measured]);
 
   // Push queued changes as soon as the connection comes back.
   useEffect(() => {
@@ -435,14 +531,16 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     [setNodes, enqueue, scheduleFlush],
   );
 
-  /** Live drag updates: state only, so connection lines follow in real time. */
+  /**
+   * Live drag updates: not persisted, so connection lines follow in real time
+   * without a write per frame. Goes through `nodesRef` for the same reason
+   * `setNodes` does — the two must not disagree about what the map holds.
+   */
   const moveNodeLive = useCallback((id: string, x: number, y: number) => {
     dirtyPositions.current.add(id);
-    setNodesState((prev) => {
-      const next = prev.map((n) => (n.id === id ? { ...n, x, y } : n));
-      nodesRef.current = next;
-      return next;
-    });
+    const next = nodesRef.current.map((n) => (n.id === id ? { ...n, x, y } : n));
+    nodesRef.current = next;
+    setNodesState(next);
   }, []);
 
   /** Called once on pointer-up so we persist a single time per drag. */
@@ -487,5 +585,122 @@ export function useNodes(canvasWidth: number, canvasHeight: number) {
     scheduleFlush();
   }, [setNodes, userId, enqueue, scheduleFlush]);
 
-  return { nodes, addNode, updateNode, moveNodeLive, commitPositions, deleteNode, clearAllNodes, syncStatus };
+  /**
+   * Pull the server's view and merge it in. Used by the realtime subscription
+   * below, and after a share, where the change was made by a call that bypassed
+   * the outbound queue.
+   */
+  const refresh = useCallback(async () => {
+    if (isGuest || !storeId) return;
+    // One at a time. A single share fires several row events in a row, and
+    // letting each start its own read means several snapshots in flight at
+    // once — whichever happens to land last wins, so an older one can undo the
+    // arrival that prompted it. Note the request instead and re-read after.
+    if (refreshing.current) {
+      refreshWanted.current = true;
+      return;
+    }
+    refreshing.current = true;
+    const mine = epoch.current;
+    try {
+      do {
+        refreshWanted.current = false;
+        const server = await listNodes();
+        if (epoch.current !== mine) return; // identity changed mid-flight
+        let changed = false;
+        setNodes((prev) => {
+          const merged = mergeServer(server, prev, pendingRef.current, dirtyPositions.current);
+          changed = !sameNodes(merged, prev);
+          return changed ? merged : prev;
+        });
+        trace(`pulled ${server.length} entries`, changed ? 'map updated' : 'no change');
+        setSyncStatus('synced');
+      } while (refreshWanted.current);
+    } catch (err) {
+      // Never silent. A pull that throws on every attempt looks exactly like a
+      // pull that never runs, and both read as "the app is just slow".
+      console.warn('[sync] pull failed', err);
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    } finally {
+      refreshing.current = false;
+      refreshWanted.current = false;
+    }
+  }, [isGuest, storeId, setNodes]);
+
+  /** Push anything queued right now, rather than waiting out the debounce. */
+  const flushNow = useCallback(async () => {
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    await flush();
+  }, [flush]);
+
+  /**
+   * Live updates from the other account. Without this an entry sent to you
+   * would only appear on the next reload, which is precisely the moment the
+   * demo is built around.
+   */
+  useEffect(() => {
+    if (isGuest || !storeId || !ready) {
+      trace('not watching', { isGuest, storeId, ready });
+      return;
+    }
+    trace('watching for changes', storeId);
+    const stop = subscribeToNodes(() => {
+      trace('change announced by the database');
+      void refresh();
+    });
+    return () => {
+      trace('stopped watching');
+      stop();
+    };
+  }, [isGuest, storeId, ready, refresh]);
+
+  /**
+   * The backstop under that subscription, because it has two gaps neither side
+   * can close on its own.
+   *
+   * The socket drops — a sleeping laptop, a throttled background tab — and
+   * whatever changed while it was down produced no event. And an entry handed
+   * *back* stops being readable by the recipient at the moment it changes, so
+   * the database has nothing it is allowed to tell them: the one person who
+   * needs to watch it leave is the one person the event cannot reach.
+   *
+   * Returning to the window covers both immediately, which is what the demo
+   * actually does — two windows, one alt-tab. The timer covers them while both
+   * sit side by side with neither focused.
+   */
+  useEffect(() => {
+    if (isGuest || !storeId || !ready) return;
+    const pull = (why: string) => {
+      if (document.visibilityState !== 'visible') return;
+      trace(`pulling (${why})`);
+      void refresh();
+    };
+    const onFocus = () => pull('window focused');
+    const onVisible = () => pull('window shown');
+    const onTimer = () => pull('periodic');
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = setInterval(onTimer, BACKGROUND_REFRESH_MS);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(timer);
+    };
+  }, [isGuest, storeId, ready, refresh]);
+
+  return {
+    nodes,
+    addNode,
+    updateNode,
+    moveNodeLive,
+    commitPositions,
+    deleteNode,
+    clearAllNodes,
+    syncStatus,
+    refresh,
+    flushNow,
+  };
 }

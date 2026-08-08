@@ -1,0 +1,39 @@
+# Netlify build settings for the mindmap web app.
+#
+# This repo is a pnpm workspace with several packages; only `quiet-mindmap`
+# is deployed. The build runs from the repo root so pnpm can resolve the
+# workspace links, then publishes that one package's output.
+#
+# The app is entirely client-side — no server, no API. Sign-in currently needs
+# VITE_CLERK_PUBLISHABLE_KEY set in Netlify's environment variables (a
+# development key, `pk_test_…`); without it the build fails deliberately rather
+# than shipping a page that breaks on load.
+
+[build]
+  command = "corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/quiet-mindmap run build"
+  publish = "artifacts/quiet-mindmap/dist/public"
+
+[build.environment]
+  NODE_VERSION = "24"
+  # The root preinstall hook is a `sh` one-liner; Netlify's Linux builders have
+  # it, unlike a Windows shell. Nothing extra is needed here.
+  NPM_FLAGS = "--version"
+
+# Single-page app: every path must serve index.html so a refresh on /map does
+# not 404. Mirrors public/_redirects, kept here so the rule is visible in the
+# build config too.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# The seeded demo pictures are immutable, content-addressed by name.
+[[headers]]
+  for = "/demo/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

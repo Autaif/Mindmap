@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { MindNode } from '../types';
 import { KIND_META } from '../types';
+import { glassSurface, GLASS_VEIL_HOVER } from '../lib/glass';
+import { RADIUS_LG, RADIUS_SM, RADIUS_XS, BORDER_SUBTLE, BORDER_W, SHADOW_FLOAT, SUCCESS_BG, SUCCESS_BORDER, dotGlow, Z } from '../lib/tokens';
+import { T_BACKGROUND } from '../lib/motion';
+import { hoverStyle } from '../lib/hover';
+import { useMotionPrefs } from '../hooks/useMotionPrefs';
 
 export const STALE_DAYS = 7;
 const NOTIFY_KEY = 'quiet-mindmap-digest-notified';
@@ -53,6 +58,8 @@ export function useWeeklyDigestNotification(staleCount: number, onOpenDigest: ()
   }, [staleCount, onOpenDigest]);
 }
 
+const staleRowHover = hoverStyle({ background: GLASS_VEIL_HOVER });
+
 export function DigestPanel({
   nodes,
   onClose,
@@ -66,31 +73,28 @@ export function DigestPanel({
 }) {
   const [now] = useState(() => Date.now());
   const stale = useMemo(() => getStaleOpenNodes(nodes, now), [nodes, now]);
+  const prefs = useMotionPrefs();
 
   return (
     <motion.div
       initial={{ opacity: 0, x: 24 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 24 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+      transition={prefs.panelSpring}
       style={{
         position: 'fixed',
         top: 68,
         right: 18,
         bottom: 60,
         width: 'min(340px, calc(100vw - 36px))',
-        background: 'hsl(228,32%,10%)',
-        border: '1px solid hsl(228,25%,20%)',
-        borderRadius: 16,
-        zIndex: 65,
-        boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-        backdropFilter: 'blur(12px)',
+        zIndex: Z.digest,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        ...glassSurface('panel', { radius: RADIUS_LG, shadow: SHADOW_FLOAT, blur: prefs.blurPanel }),
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px 12px', borderBottom: '1px solid hsl(228,25%,15%)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px 12px', borderBottom: `${BORDER_W}px solid ${BORDER_SUBTLE}` }}>
         <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
           <circle cx="7.5" cy="7.5" r="6" stroke="hsl(262,60%,65%)" strokeWidth="1.4" />
           <path d="M7.5 4v3.5l2.3 2.3" stroke="hsl(262,60%,65%)" strokeWidth="1.4" strokeLinecap="round" />
@@ -104,7 +108,7 @@ export function DigestPanel({
         <button
           onClick={onClose}
           aria-label="Close digest"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(220,15%,45%)', padding: 4, borderRadius: 6 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'hsl(220,15%,45%)', padding: 4, borderRadius: RADIUS_XS }}
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -128,15 +132,14 @@ export function DigestPanel({
                   alignItems: 'flex-start',
                   gap: 9,
                   padding: '10px 10px',
-                  borderRadius: 10,
+                  borderRadius: RADIUS_SM,
                   cursor: 'pointer',
-                  transition: 'background 0.12s',
+                  transition: T_BACKGROUND,
                 }}
                 onClick={() => onSelect(n.id)}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                {...staleRowHover}
               >
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: meta.color, boxShadow: `0 0 6px ${meta.color}`, marginTop: 5, flexShrink: 0 }} />
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: meta.color, boxShadow: dotGlow(meta.color), marginTop: 5, flexShrink: 0 }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: 'hsl(220,20%,86%)', lineHeight: 1.35 }}>{n.title}</p>
                   <p style={{ margin: '2px 0 0', fontSize: 11, color: 'hsl(220,15%,45%)', fontWeight: 500 }}>
@@ -152,9 +155,9 @@ export function DigestPanel({
                   title="Mark handled"
                   aria-label={`Mark "${n.title}" handled`}
                   style={{
-                    background: 'rgba(52,211,153,0.1)',
-                    border: '1px solid rgba(52,211,153,0.25)',
-                    borderRadius: 7,
+                    background: SUCCESS_BG,
+                    border: `${BORDER_W}px solid ${SUCCESS_BORDER}`,
+                    borderRadius: RADIUS_XS,
                     color: '#34d399',
                     cursor: 'pointer',
                     padding: '4px 6px',

@@ -1,0 +1,28 @@
+# Keep line endings identical no matter which machine commits.
+#
+# Without this, git relies on each machine's `core.autocrlf` setting. If two
+# machines disagree, one of them starts producing diffs where every single line
+# of a file looks changed — which buries the real edit and causes merge
+# conflicts in files nobody touched.
+#
+# `text=auto` stores everything as LF in the repository and converts to the
+# platform's native ending on checkout. This matches what this repo already
+# contains, so adding it changes no existing file.
+* text=auto
+
+# Files that must keep LF even on Windows, because something other than a
+# Windows editor reads them: the root `preinstall` hook runs under `sh`, and
+# these run on Linux (Replit / Netlify build).
+*.sh text eol=lf
+
+# Binary — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
