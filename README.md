@@ -85,4 +85,4 @@ This is the riskiest code in the repo (`hooks/useNodes.ts`); add tests when chan
 
 ## License
 
-MIT (see `package.json`).
+MIT. See [LICENSE](LICENSE).
