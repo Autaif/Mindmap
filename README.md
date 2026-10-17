@@ -4,6 +4,18 @@ A private, space-themed mindmap for managers and directors to capture, classify,
 
 Entries live in a per-user Postgres store behind an API (Clerk auth), with an offline-first localStorage cache that syncs when the connection returns.
 
+## Screenshots
+
+| Map | Entry detail |
+|---|---|
+| ![Map](docs/screenshots/map.png) | ![Detail](docs/screenshots/detail.png) |
+
+| Add entry | Landing |
+|---|---|
+| ![Add entry](docs/screenshots/add-entry.png) | ![Landing](docs/screenshots/landing.png) |
+
+The entries shown are the built-in example seed data.
+
 ## Features
 
 - Dark canvas with nodes orbiting a central hub; scroll/pinch to zoom, drag to pan
