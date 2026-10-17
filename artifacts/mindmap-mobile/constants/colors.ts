@@ -1,5 +1,5 @@
 /**
- * Semantic design tokens — synced with the AZM Mindmap web app's
+ * Semantic design tokens — synced with the Mindmap web app's
  * space/dark identity (artifacts/quiet-mindmap). The app is dark-only:
  * both palettes carry the same deep-space values so system appearance
  * never flips it to a light theme.

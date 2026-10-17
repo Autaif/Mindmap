@@ -57,7 +57,7 @@ export function LandingPage() {
             color: 'hsl(220,20%,94%)',
           }}
         >
-          AZM Mindmap
+          Mindmap
         </h1>
         <p style={{ margin: '0 0 28px', fontSize: 15, lineHeight: 1.7, color: 'hsl(220,15%,58%)' }}>
           A private orbit for the concerns, ideas, and tasks you can't put in a shared inbox.

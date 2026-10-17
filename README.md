@@ -1,4 +1,4 @@
-# AZM Mindmap
+# Mindmap
 
 A private, space-themed mindmap for managers and directors to capture, classify, and clear workplace concerns and tasks, without routing sensitive notes through a secretary or shared inbox.
 

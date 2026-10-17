@@ -50,7 +50,7 @@ export function FilterBar({ search, onSearch, kindFilter, onKindFilter, statusFi
           flexShrink: 0,
         }} />
         <span style={{ fontSize: '13px', fontWeight: 700, color: 'hsl(220,20%,80%)', letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>
-          AZM Mindmap
+          Mindmap
         </span>
       </div>
 

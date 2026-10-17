@@ -33,7 +33,7 @@ export function useWeeklyDigestNotification(staleCount: number, onOpenDigest: ()
 
     const show = () => {
       localStorage.setItem(NOTIFY_KEY, String(Date.now()));
-      const n = new Notification('AZM Mindmap — weekly digest', {
+      const n = new Notification('Mindmap — weekly digest', {
         body: `${staleCount} entr${staleCount === 1 ? 'y has' : 'ies have'} been open for more than ${STALE_DAYS} days.`,
       });
       n.onclick = () => {

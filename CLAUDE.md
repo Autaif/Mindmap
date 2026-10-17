@@ -6,7 +6,7 @@ project off Replit, and which changes must not be reverted.
 
 ## What this is
 
-AZM Mindmap — a private, space-themed mindmap for capturing workplace concerns. pnpm
+Mindmap — a private, space-themed mindmap for capturing workplace concerns. pnpm
 workspace, 10 projects. Internal identifiers deliberately keep the old `quiet-mindmap`
 spelling; do not rename them (see replit.md).
 

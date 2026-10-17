@@ -1,6 +1,6 @@
-# AZM Mindmap
+# Mindmap
 
-> Product name is **AZM Mindmap**. Internal identifiers deliberately keep the old
+> Product name is **Mindmap**. Internal identifiers deliberately keep the old
 > `quiet-mindmap` spelling — package names, directory names, artifact ids, and
 > localStorage keys. Renaming those would orphan every user's saved entries and
 > break the workspace filters for no user-visible gain.

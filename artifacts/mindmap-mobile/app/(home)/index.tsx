@@ -68,7 +68,7 @@ export default function ListScreen() {
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>
-              AZM Mindmap
+              Mindmap
             </Text>
             <Text style={[styles.headerSub, { color: colors.mutedForeground }]}>
               {openCount === 0
